@@ -1,0 +1,23 @@
+name: astrbot_plugin_game_resource_search
+display_name: 游戏资源检索
+desc: 通过关键词从 MySQL 中查询游戏资源并返回游戏名与下载链接。
+version: v1.0.0
+author: 午时五十五
+repo: https://github.com/GALIAIS/AstrBot-Plugins/tree/main/resource-search/astrbot_plugin_game_resource_search
+astrbot_version: ">=4.16,<5"
+support_platforms:
+  - aiocqhttp
+  - qq_official
+  - telegram
+  - wecom
+  - lark
+  - dingtalk
+  - discord
+  - slack
+  - kook
+  - vocechat
+  - weixin_official_account
+  - satori
+  - misskey
+  - line
+

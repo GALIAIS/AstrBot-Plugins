@@ -1,0 +1,141 @@
+{
+  "base_url": {
+    "description": "Shiron 接口地址，例如 http://127.0.0.1:3000 或 https://api.example.com/v1",
+    "type": "string",
+    "default": "http://127.0.0.1:3000",
+    "obvious_hint": true,
+    "hint": "填写后请再填写 api_key，插件初始化时会自动拉取模型列表写入下拉选项。"
+  },
+  "api_key": {
+    "description": "Shiron 密钥",
+    "type": "string",
+    "default": "",
+    "obvious_hint": true,
+    "hint": "建议使用只读或低权限密钥进行调试。"
+  },
+  "allowed_user_ids": {
+    "description": "允许使用插件的用户 ID 列表（留空表示不限制）",
+    "type": "list",
+    "default": [],
+    "hint": "例如 [\"123456\", \"789012\"]。填写后仅这些用户可执行插件指令。"
+  },
+  "public_commands": {
+    "description": "公开指令白名单（即使不在 allowed_user_ids 也可用）",
+    "type": "list",
+    "default": [
+      "帮助",
+      "模型",
+      "接口"
+    ],
+    "hint": "可填中文或英文别名，如 [\"帮助\",\"模型\",\"接口\"] 或 [\"help\",\"models\",\"api\"]。"
+  },
+  "chat_model": {
+    "description": "用于 /v1/chat/completions 的默认模型",
+    "type": "string",
+    "default": "gpt-4o-mini"
+  },
+  "responses_model": {
+    "description": "用于 /v1/responses 的默认模型",
+    "type": "string",
+    "default": "gpt-4o-mini"
+  },
+  "completions_model": {
+    "description": "用于 /v1/completions 的默认模型",
+    "type": "string",
+    "default": "gpt-4o-mini"
+  },
+  "embedding_model": {
+    "description": "用于 /v1/embeddings 的默认模型",
+    "type": "string",
+    "default": "text-embedding-3-small"
+  },
+  "image_model": {
+    "description": "用于 /v1/images/generations 的默认模型",
+    "type": "string",
+    "default": "gpt-image-1"
+  },
+  "video_model": {
+    "description": "用于 /视频 系列指令的默认模型（可留空，插件会自动选择）",
+    "type": "string",
+    "default": ""
+  },
+  "smart_model_switch_enabled": {
+    "description": "是否开启智能切换模型（生图/图生图/视频）",
+    "type": "bool",
+    "default": true
+  },
+  "smart_switch_models": {
+    "description": "手动指定智能切换候选模型列表（优先于自动识别）",
+    "type": "list",
+    "default": [],
+    "hint": "示例：[\"gemini-3.0-pro-image-landscape\", \"gemini-2.5-flash-image-landscape\", \"veo_3_1_t2v_fast_landscape\"]"
+  },
+  "image_size": {
+    "description": "生图尺寸",
+    "type": "string",
+    "default": "1024x1024"
+  },
+  "moderation_model": {
+    "description": "用于 /v1/moderations 的默认模型",
+    "type": "string",
+    "default": "omni-moderation-latest"
+  },
+  "rerank_model": {
+    "description": "用于 /v1/rerank 的默认模型",
+    "type": "string",
+    "default": "rerank-v3.5"
+  },
+  "temperature": {
+    "description": "文本生成温度参数",
+    "type": "float",
+    "default": 0.7
+  },
+  "max_tokens": {
+    "description": "文本生成最大 tokens",
+    "type": "int",
+    "default": 1024
+  },
+  "reasoning_effort": {
+    "description": "推理强度（推理模型可选：low/medium/high）",
+    "type": "string",
+    "default": ""
+  },
+  "reasoning_drop_temperature": {
+    "description": "推理模型请求时移除 temperature",
+    "type": "bool",
+    "default": true
+  },
+  "reasoning_drop_top_p": {
+    "description": "推理模型请求时移除 top_p",
+    "type": "bool",
+    "default": true
+  },
+  "include_message_images": {
+    "description": "是否将当前用户消息中的图片自动加入请求",
+    "type": "bool",
+    "default": true
+  },
+  "include_quoted_images": {
+    "description": "是否尝试从引用/回复消息中提取图片并加入请求",
+    "type": "bool",
+    "default": true
+  },
+  "max_input_images": {
+    "description": "单次请求最多携带的图片数量",
+    "type": "int",
+    "default": 6
+  },
+  "image_detail": {
+    "description": "chat 图片 detail 参数（low/high/auto）",
+    "type": "string",
+    "default": "auto"
+  },
+  "timeout": {
+    "description": "HTTP 请求超时时间（秒）",
+    "type": "float",
+    "default": 90.0
+  }
+}
+
+
+

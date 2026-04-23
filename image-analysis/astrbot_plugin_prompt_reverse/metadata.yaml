@@ -1,0 +1,7 @@
+name: astrbot_plugin_prompt_reverse
+display_name: Prompt Reverse
+desc: 基于 WD Tagger 的图片提示词反推插件。
+version: v1.3.6
+author: 午时五十五
+repo: https://github.com/GALIAIS/AstrBot-Plugins/tree/main/image-analysis/astrbot_plugin_prompt_reverse
+

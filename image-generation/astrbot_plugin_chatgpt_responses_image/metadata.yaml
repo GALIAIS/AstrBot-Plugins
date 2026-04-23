@@ -1,0 +1,23 @@
+name: astrbot_plugin_chatgpt_responses_image
+display_name: ChatGPT Images 生图
+desc: 基于 OpenAI Responses API + image_generation 的 AstrBot 生图插件，支持文生图、图生图、多图输入与队列控制。
+version: v2.1.0
+author: 午时五十五
+repo: https://github.com/GALIAIS/AstrBot-Plugins/tree/main/image-generation/astrbot_plugin_chatgpt_responses_image
+astrbot_version: ">=4.16,<5"
+support_platforms:
+  - aiocqhttp
+  - qq_official
+  - telegram
+  - wecom
+  - lark
+  - dingtalk
+  - discord
+  - slack
+  - kook
+  - vocechat
+  - weixin_official_account
+  - satori
+  - misskey
+  - line
+

@@ -1,0 +1,196 @@
+{
+  "api_base": {
+    "description": "NovelAI API 基础地址",
+    "type": "string",
+    "default": "https://api.novelai.net"
+  },
+  "image_base": {
+    "description": "NovelAI 图像服务地址",
+    "type": "string",
+    "default": "https://image.novelai.net"
+  },
+  "api_key": {
+    "description": "Bearer Token（已有 accessToken 时填写）",
+    "type": "string",
+    "default": "",
+    "obvious_hint": true
+  },
+  "access_key": {
+    "description": "NovelAI Access Key（用于 /nai登录 自动换取 accessToken）",
+    "type": "string",
+    "default": "",
+    "obvious_hint": true
+  },
+  "captcha_token": {
+    "description": "登录验证码（可选）",
+    "type": "string",
+    "default": ""
+  },
+  "timeout": {
+    "description": "HTTP 请求超时时间（秒）",
+    "type": "float",
+    "default": 120.0
+  },
+  "request_retries": {
+    "description": "请求失败重试次数（429/5xx）",
+    "type": "int",
+    "default": 2
+  },
+  "retry_backoff_seconds": {
+    "description": "重试退避基础秒数",
+    "type": "float",
+    "default": 1.2
+  },
+  "default_model": {
+    "description": "默认生图模型",
+    "type": "string",
+    "default": "nai-diffusion-4-5-full"
+  },
+  "image_models": {
+    "description": "可选生图模型列表（/nai模型 与 /nai同步模型 使用此列表）",
+    "type": "list",
+    "default": [
+      "nai-diffusion-4-5-full",
+      "nai-diffusion-4-5-curated",
+      "nai-diffusion-4-full"
+    ]
+  },
+  "default_size": {
+    "description": "默认固定尺寸（portrait/landscape/square）",
+    "type": "string",
+    "default": "square"
+  },
+  "default_action": {
+    "description": "默认动作(generate/img2img/inpaint/infill)",
+    "type": "string",
+    "default": "generate"
+  },
+  "default_steps": {
+    "description": "默认 steps",
+    "type": "int",
+    "default": 28
+  },
+  "default_scale": {
+    "description": "默认 scale",
+    "type": "int",
+    "default": 5
+  },
+  "default_sampler": {
+    "description": "默认采样器（官方预设）",
+    "type": "string",
+    "default": "k_euler_ancestral",
+    "options": [
+      "k_euler_ancestral",
+      "k_euler",
+      "k_dpmpp_2s_ancestral",
+      "k_dpmpp_2m",
+      "k_dpmpp_sde",
+      "k_dpmpp_2m_sde",
+      "k_dpmpp_3m_sde",
+      "k_dpm_2",
+      "k_dpm_2_ancestral",
+      "k_dpm_fast",
+      "k_dpm_adaptive",
+      "k_lms",
+      "ddim",
+      "ddim_v3",
+      "nai_smea",
+      "nai_smea_dyn"
+    ]
+  },
+  "default_n_samples": {
+    "description": "默认每次生成数量",
+    "type": "int",
+    "default": 1
+  },
+  "default_negative_prompt": {
+    "description": "默认负面提示词",
+    "type": "string",
+    "default": ""
+  },
+  "default_information_extracted": {
+    "description": "encode-vibe 默认信息提取强度",
+    "type": "int",
+    "default": 1
+  },
+  "include_quoted_images": {
+    "description": "是否从原始消息结构中提取引用图片",
+    "type": "bool",
+    "default": true
+  },
+  "admin_user_ids": {
+    "description": "管理员用户 ID 列表（这些用户可用全部功能与自定义分辨率）",
+    "type": "list",
+    "default": []
+  },
+  "free_max_resolution": {
+    "description": "非管理员不消耗路径的分辨率上限（宽*高）",
+    "type": "int",
+    "default": 1048576
+  },
+  "opus_free_mode": {
+    "description": "开启 Opus 免费模式自动参数收敛（非管理员强制单张且<=1024边长）",
+    "type": "bool",
+    "default": true
+  },
+  "free_max_side": {
+    "description": "Opus 免费模式单边上限",
+    "type": "int",
+    "default": 1024
+  },
+  "admin_max_resolution": {
+    "description": "管理员自定义分辨率上限（宽*高）",
+    "type": "int",
+    "default": 4194304
+  },
+  "whitelist_user_ids": {
+    "description": "白名单用户 ID 列表（留空=不启用）",
+    "type": "list",
+    "default": []
+  },
+  "blacklist_user_ids": {
+    "description": "黑名单用户 ID 列表",
+    "type": "list",
+    "default": []
+  },
+  "quota_enabled": {
+    "description": "是否启用额度系统（非管理员）",
+    "type": "bool",
+    "default": true
+  },
+  "default_daily_quota": {
+    "description": "用户初始日额度",
+    "type": "int",
+    "default": 3
+  },
+  "sign_bonus_quota": {
+    "description": "每日签到增加额度",
+    "type": "int",
+    "default": 1
+  },
+  "quota_cap": {
+    "description": "额度上限",
+    "type": "int",
+    "default": 20
+  },
+  "auto_trigger_keywords": {
+    "description": "自动画图触发关键词（命中任一即触发）",
+    "type": "list",
+    "default": [
+      "画",
+      "配图",
+      "来一张",
+      "生成图"
+    ]
+  },
+  "prompt_wrapper": {
+    "description": "智能模式提示词包装模板，使用 {prompt} 占位",
+    "type": "string",
+    "default": "{prompt}, masterpiece, best quality"
+  },
+  "debug": {
+    "description": "是否开启调试日志（会输出图片解析与上游请求失败细节）",
+    "type": "bool",
+    "default": false
+  }
+}

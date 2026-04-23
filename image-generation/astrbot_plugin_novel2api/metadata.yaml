@@ -1,0 +1,23 @@
+name: astrbot_plugin_novel2api
+display_name: Novel2API 生图
+desc: NovelAI 直连 AstrBot 生图插件，支持文生图、图生图、导演工具、参考图编码与模型自动同步。
+version: v2.0.0
+author: 午时五十五
+repo: https://github.com/GALIAIS/AstrBot-Plugins/tree/main/image-generation/astrbot_plugin_novel2api
+astrbot_version: ">=4.16,<5"
+support_platforms:
+  - aiocqhttp
+  - qq_official
+  - telegram
+  - wecom
+  - lark
+  - dingtalk
+  - discord
+  - slack
+  - kook
+  - vocechat
+  - weixin_official_account
+  - satori
+  - misskey
+  - line
+

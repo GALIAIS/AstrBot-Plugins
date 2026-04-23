@@ -1,0 +1,23 @@
+name: astrbot_plugin_shiron_gateway
+display_name: Shiron Gateway
+desc: Full Shiron endpoint gateway plugin for AstrBot with command wrappers and raw passthrough.
+version: v1.0.0
+author: 午时五十五
+repo: https://github.com/GALIAIS/AstrBot-Plugins/tree/main/ai-gateway/astrbot_plugin_shiron_gateway
+astrbot_version: ">=4.16,<5"
+support_platforms:
+  - aiocqhttp
+  - qq_official
+  - telegram
+  - wecom
+  - lark
+  - dingtalk
+  - discord
+  - slack
+  - kook
+  - vocechat
+  - weixin_official_account
+  - satori
+  - misskey
+  - line
+

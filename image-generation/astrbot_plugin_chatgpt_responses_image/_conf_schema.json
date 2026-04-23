@@ -1,0 +1,108 @@
+{
+  "base_url": {
+    "description": "OpenAI/中转站地址（支持裸域名、/v1、/v1/response、/v1/responses）",
+    "type": "string",
+    "default": "https://api.openai.com"
+  },
+  "api_key": {
+    "description": "OpenAI 或中转站 API Key",
+    "type": "string",
+    "default": "",
+    "obvious_hint": true
+  },
+  "chatgpt_account_id": {
+    "description": "可选：部分中转站要求的 chatgpt-account-id",
+    "type": "string",
+    "default": ""
+  },
+  "default_model": {
+    "description": "Responses 外层模型，默认 gpt-5.4",
+    "type": "string",
+    "default": "gpt-5.4"
+  },
+  "default_size": {
+    "description": "默认输出尺寸（支持 auto 或任意 <宽>x<高>，例如 1024x1024、1536x1024、2160x3840）",
+    "type": "string",
+    "default": "1024x1024"
+  },
+  "default_output_format": {
+    "description": "默认输出格式",
+    "type": "string",
+    "default": "png",
+    "options": [
+      "png",
+      "jpeg",
+      "webp"
+    ]
+  },
+  "default_instructions": {
+    "description": "Responses 默认 instructions",
+    "type": "string",
+    "default": "you are a helpful assistant"
+  },
+  "session_id": {
+    "description": "默认 session_id（为空时会自动生成）",
+    "type": "string",
+    "default": "chatgpt-responses-image"
+  },
+  "user_agent": {
+    "description": "Codex 风格 user-agent 请求头",
+    "type": "string",
+    "default": "codex-tui/0.122.0 (Manjaro 26.1.0-pre; x86_64) vscode/3.0.12 (codex-tui; 0.122.0)"
+  },
+  "version": {
+    "description": "Codex 风格 version 请求头",
+    "type": "string",
+    "default": "0.122.0"
+  },
+  "originator": {
+    "description": "Codex 风格 originator 请求头",
+    "type": "string",
+    "default": "codex_cli_rs"
+  },
+  "allow_partial_fallback": {
+    "description": "未拿到最终 result 时，是否回退最后一张 partial_image",
+    "type": "bool",
+    "default": true
+  },
+  "max_input_images": {
+    "description": "单次改图最多携带输入图片数量",
+    "type": "int",
+    "default": 4
+  },
+  "max_image_megabytes": {
+    "description": "输入图片和 URL 下载大小上限（MB）",
+    "type": "int",
+    "default": 20
+  },
+  "max_concurrency": {
+    "description": "并发生成任务数",
+    "type": "int",
+    "default": 1
+  },
+  "max_queue_waiting": {
+    "description": "最大排队等待任务数（超过直接拒绝）",
+    "type": "int",
+    "default": 20
+  },
+  "timeout": {
+    "description": "HTTP / curl 超时秒数",
+    "type": "float",
+    "default": 180.0
+  },
+  "request_retries": {
+    "description": "请求失败重试次数",
+    "type": "int",
+    "default": 2
+  },
+  "retry_backoff_seconds": {
+    "description": "重试退避基础秒数",
+    "type": "float",
+    "default": 1.2
+  },
+  "debug": {
+    "description": "输出调试日志（记录 transport、SSE 解析、回复取图等）",
+    "type": "bool",
+    "default": false
+  }
+}

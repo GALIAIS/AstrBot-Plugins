@@ -1,0 +1,131 @@
+{
+  "model_name": {
+    "description": "WD模型名称",
+    "type": "string",
+    "default": "SmilingWolf/wd-eva02-large-tagger-v3"
+  },
+  "model_local_dir": {
+    "description": "本地模型目录（可选，留空则自动下载到插件目录）",
+    "type": "string",
+    "default": ""
+  },
+  "idle_unload_seconds": {
+    "description": "WD模型空闲卸载秒数（0=不卸载）",
+    "type": "float",
+    "default": 10.0
+  },
+  "use_subprocess": {
+    "description": "是否使用子进程加载WD模型（释放内存更彻底）",
+    "type": "bool",
+    "default": true
+  },
+  "subprocess_timeout_seconds": {
+    "description": "子进程推理超时秒数",
+    "type": "float",
+    "default": 120.0
+  },
+  "mode": {
+    "description": "默认模式: wd_only / wd_llm / wd_visual",
+    "type": "string",
+    "default": "wd_only"
+  },
+  "threshold": {
+    "description": "WD反推阈值(0-1)",
+    "type": "float",
+    "default": 0.35
+  },
+  "general_mcut": {
+    "description": "general 标签使用 MCUT 自适应阈值（开启后忽略 threshold）",
+    "type": "bool",
+    "default": false
+  },
+  "include_character_tags": {
+    "description": "是否合并 character（角色名）标签",
+    "type": "bool",
+    "default": false
+  },
+  "character_threshold": {
+    "description": "character（角色名）标签阈值(0-1)",
+    "type": "float",
+    "default": 0.85
+  },
+  "character_mcut": {
+    "description": "character 标签使用 MCUT 自适应阈值（开启后忽略 character_threshold）",
+    "type": "bool",
+    "default": false
+  },
+  "character_first": {
+    "description": "合并标签时 character 标签放在前面",
+    "type": "bool",
+    "default": true
+  },
+  "max_tags": {
+    "description": "最多输出标签数量",
+    "type": "int",
+    "default": 80
+  },
+  "escape_parentheses": {
+    "description": "是否转义括号 ( 和 )（适用于 Stable Diffusion 提示词）",
+    "type": "bool",
+    "default": true
+  },
+  "llm_model_override": {
+    "description": "wd_llm 模式模型（下拉选择，留空=使用Provider默认模型）",
+    "type": "string",
+    "default": ""
+  },
+  "visual_model_override": {
+    "description": "wd_visual 模式模型（下拉选择，留空=使用Provider默认模型）",
+    "type": "string",
+    "default": ""
+  },
+  "visual_strategy": {
+    "description": "wd_visual 策略：prompt=结合图片直接生成SDXL提示词；merge_json=按JSON校验后融合WD标签",
+    "type": "string",
+    "default": "prompt",
+    "options": [
+      "prompt",
+      "merge_json"
+    ]
+  },
+  "llm_prompt_template": {
+    "description": "wd_llm 提示词模板，支持 {original_tags}",
+    "type": "text",
+    "default": "你是专业图片标签优化助手。请基于给定的WD标签，输出更准确、去重、排序合理的标签列表。\\n要求：\\n1. 保留准确标签，删除模糊/重复标签。\\n2. 全部使用小写英文标签，逗号分隔。\\n3. 仅输出标签串，不要解释。\\n\\n原始标签：{original_tags}\\n\\n输出："
+  },
+  "llm_role_prompt_file": {
+    "description": "wd_llm 主提示词文件（相对插件目录或绝对路径；留空则使用 llm_prompt_template）",
+    "type": "string",
+    "default": "SDXL_Prompt_Role.txt"
+  },
+  "llm_vocab_file": {
+    "description": "wd_llm 提示词汇库文件（相对插件目录或绝对路径）",
+    "type": "string",
+    "default": "提示词汇库.txt"
+  },
+  "llm_vocab_max_lines": {
+    "description": "wd_llm 每次最多注入词库匹配行数（0=不注入）",
+    "type": "int",
+    "default": 120
+  },
+  "visual_prompt_template": {
+    "description": "wd_visual 提示词模板，支持 {tag_list}",
+    "type": "text",
+    "default": "你是图片标签验证专家。请结合图片内容校验标签。\\n标签：{tag_list}\\n\\n只输出 JSON 对象，格式：{\"accurate_tags\":[],\"inaccurate_tags\":[],\"missing_tags\":[],\"redundant_tags\":[],\"confidence_scores\":{}}"
+  },
+  "visual_weight": {
+    "description": "视觉验证融合权重(0-1)",
+    "type": "float",
+    "default": 0.4
+  },
+  "timeout": {
+    "description": "HTTP超时秒数",
+    "type": "float",
+    "default": 60.0
+  },
+  "allowed_user_ids": {
+    "description": "允许使用插件的用户ID列表（空=所有人）",
+    "type": "list",
+    "default": []
+  }
+}

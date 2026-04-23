@@ -1,0 +1,59 @@
+{
+  "allowed_user_ids": {
+    "description": "允许使用插件的用户 ID 列表（留空表示不限制）",
+    "type": "list",
+    "default": [],
+    "hint": "例如 [\"123456\", \"789012\"]。"
+  },
+  "mysql_host": {
+    "description": "MySQL 主机地址",
+    "type": "string",
+    "default": "127.0.0.1"
+  },
+  "mysql_port": {
+    "description": "MySQL 端口",
+    "type": "int",
+    "default": 3306
+  },
+  "mysql_user": {
+    "description": "MySQL 用户名",
+    "type": "string",
+    "default": ""
+  },
+  "mysql_password": {
+    "description": "MySQL 密码",
+    "type": "string",
+    "default": ""
+  },
+  "mysql_database": {
+    "description": "数据库名",
+    "type": "string",
+    "default": "galgame_db"
+  },
+  "mysql_table": {
+    "description": "游戏资源表名",
+    "type": "string",
+    "default": "games"
+  },
+  "mysql_connect_timeout": {
+    "description": "MySQL 连接超时（秒）",
+    "type": "float",
+    "default": 8.0
+  },
+  "game_query_limit": {
+    "description": "每次查询返回条数（1-20）",
+    "type": "int",
+    "default": 5
+  },
+  "game_match_fields": {
+    "description": "关键词匹配字段",
+    "type": "list",
+    "default": [
+      "title_cn",
+      "title_jp",
+      "brand",
+      "tags"
+    ],
+    "hint": "可选字段：title_cn/title_jp/brand/tags"
+  }
+}
