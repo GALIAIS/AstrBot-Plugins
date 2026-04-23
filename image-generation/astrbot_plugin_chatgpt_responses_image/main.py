@@ -59,6 +59,7 @@ class ImageAPIResult:
 )
 class ChatGPTResponsesImagePlugin(Star):
     _FORMATS = {"png", "jpeg", "webp"}
+    _INPUT_MIME_TYPES = {"image/png", "image/jpeg", "image/webp", "image/gif"}
     _SIZE_PATTERN = re.compile(r"^\d{2,5}x\d{2,5}$", re.IGNORECASE)
     _BOOL_TRUE = {"1", "true", "yes", "on", "y", "t"}
     _BOOL_FALSE = {"0", "false", "no", "off", "n", "f"}
@@ -182,7 +183,10 @@ class ChatGPTResponsesImagePlugin(Star):
             if isinstance(arg_images, list):
                 image_sources.extend([str(x).strip() for x in arg_images if str(x).strip()])
             image_sources.extend(await self._collect_event_image_refs(event))
-            image_sources = list(dict.fromkeys([x for x in image_sources if x]))[:max_input_images]
+            # One message often exposes the same QQ image as file_id, URL, and local path.
+            # Keep enough candidates so duplicate refs do not evict later unique images.
+            candidate_limit = max(max_input_images * 8, max_input_images)
+            image_sources = list(dict.fromkeys([x for x in image_sources if x]))[:candidate_limit]
             if not image_sources:
                 return [
                     event.plain_result(
@@ -269,7 +273,7 @@ class ChatGPTResponsesImagePlugin(Star):
         model = str(opts.get("model") or self._cfg("default_model", "gpt-5.4")).strip() or "gpt-5.4"
         if self._looks_like_image_only_model(model):
             return {}, (
-                f"model={model} 不能作为 /v1/responses 外层模型。"
+                f"model={model} 不能作为 Responses 外层模型。"
                 "请使用 gpt-5.4 这类 Responses 文本模型；gpt-image-2 是工具侧模型，会由上游自动选择。"
             )
 
@@ -387,7 +391,9 @@ class ChatGPTResponsesImagePlugin(Star):
                 retryable_status = self._status_is_retryable(status_code)
 
             if retryable_status and attempt < retries:
-                await asyncio.sleep(backoff * (attempt + 1))
+                delay = self._retry_delay_seconds(resp_headers, resp_text, backoff * (attempt + 1))
+                self._debug(f"retry_responses attempt={attempt + 1} delay={delay:.2f}s status={status_code}")
+                await asyncio.sleep(delay)
                 continue
             return False, None, last_err
 
@@ -448,6 +454,9 @@ class ChatGPTResponsesImagePlugin(Star):
                     str(response_path),
                     "--max-time",
                     str(max(30, int(timeout))),
+                    "--connect-timeout",
+                    str(min(30, max(5, int(timeout)))),
+                    "--compressed",
                     "--silent",
                     "--show-error",
                     "--write-out",
@@ -476,6 +485,8 @@ class ChatGPTResponsesImagePlugin(Star):
                     status_code = 0
                 resp_text = response_path.read_text(encoding="utf-8", errors="ignore") if response_path.exists() else ""
                 header_text = header_path.read_text(encoding="utf-8", errors="ignore") if header_path.exists() else ""
+                if status_code <= 0 and not resp_text:
+                    return False, 0, {}, "", (completed.stderr or "curl did not return a HTTP response").strip()
                 return True, status_code, self._parse_curl_dump_headers(header_text), resp_text, ""
         except Exception as exc:
             return False, 0, {}, "", str(exc)
@@ -548,7 +559,7 @@ class ChatGPTResponsesImagePlugin(Star):
         result, err = await self._extract_images_from_responses_json(obj, output_format_hint)
         if result.images:
             return True, result, ""
-        return False, None, err or "JSON 返回中未找到图片结果。"
+        return False, None, err or self._extract_json_error_summary(text) or "JSON 返回中未找到图片结果。"
 
     async def _parse_sse_text(
         self,
@@ -569,24 +580,16 @@ class ChatGPTResponsesImagePlugin(Star):
             payload_type = str(payload.get("type") or "").strip()
             if payload_type == "response.created":
                 self._merge_result_from_response(result, payload.get("response"))
-                continue
             if payload_type == "response.image_generation_call.partial_image":
                 partial_image, partial_err = self._extract_partial_output_image(payload, output_format_hint)
                 if partial_err:
                     last_err = partial_err
-                continue
-            if payload_type == "response.output_item.done" and isinstance(payload.get("item"), dict):
-                item = payload["item"]
-                if str(item.get("type") or "") == "image_generation_call":
-                    self._merge_result_from_tool_item(result, item)
-                    output_image, image_err = await self._extract_output_image_from_responses_item(item, output_format_hint)
-                    if output_image is not None:
-                        result.images.append(output_image)
-                    elif image_err:
-                        last_err = image_err
-                continue
-            if payload_type == "response.completed":
+            if payload_type in {"response.completed", "response.failed", "response.incomplete"}:
                 self._merge_result_from_response(result, payload.get("response"))
+            extracted, image_err = await self._extract_images_from_responses_json(payload, output_format_hint)
+            self._merge_api_result(result, extracted)
+            if image_err and payload_type in {"error", "response.failed", "response.incomplete"}:
+                last_err = image_err
 
         if result.images:
             return True, result, ""
@@ -677,6 +680,44 @@ class ChatGPTResponsesImagePlugin(Star):
         if not result.size:
             result.size = str(item.get("size") or "").strip()
 
+    def _merge_api_result(self, target: ImageAPIResult, source: ImageAPIResult) -> None:
+        if source.model and not target.model:
+            target.model = source.model
+        if source.tool_model and not target.tool_model:
+            target.tool_model = source.tool_model
+        if source.size and not target.size:
+            target.size = source.size
+        if source.output_format and not target.output_format:
+            target.output_format = source.output_format
+        if source.completed_status:
+            target.completed_status = source.completed_status
+        if source.usage and not target.usage:
+            target.usage = source.usage
+        if source.used_partial_fallback:
+            target.used_partial_fallback = True
+        for image in source.images:
+            self._append_unique_output_image(target, image)
+
+    def _append_unique_output_image(self, result: ImageAPIResult, image: OutputImage) -> None:
+        digest = hashlib.sha256(image.data).hexdigest()
+        for existing in result.images:
+            if hashlib.sha256(existing.data).hexdigest() == digest:
+                return
+        result.images.append(image)
+
+    def _iter_image_generation_items(self, obj: Any, depth: int = 0):
+        if depth > 12:
+            return
+        if isinstance(obj, dict):
+            if str(obj.get("type") or "") == "image_generation_call":
+                yield obj
+            for value in obj.values():
+                yield from self._iter_image_generation_items(value, depth + 1)
+            return
+        if isinstance(obj, list):
+            for item in obj:
+                yield from self._iter_image_generation_items(item, depth + 1)
+
     async def _extract_images_from_responses_json(
         self,
         obj: Any,
@@ -687,22 +728,20 @@ class ChatGPTResponsesImagePlugin(Star):
             return result, "返回体不是对象。"
 
         self._merge_result_from_response(result, obj.get("response") if isinstance(obj.get("response"), dict) else obj)
-        output_items = obj.get("output")
-        if not isinstance(output_items, list):
-            output_items = obj.get("response", {}).get("output") if isinstance(obj.get("response"), dict) else []
-        if not isinstance(output_items, list):
-            output_items = []
-
         last_err = ""
-        for item in output_items:
-            if not isinstance(item, dict) or str(item.get("type") or "") != "image_generation_call":
-                continue
+        found_item = False
+        for item in self._iter_image_generation_items(obj):
+            found_item = True
             self._merge_result_from_tool_item(result, item)
             output_image, err = await self._extract_output_image_from_responses_item(item, output_format_hint)
             if output_image is not None:
-                result.images.append(output_image)
+                self._append_unique_output_image(result, output_image)
             elif err:
                 last_err = err
+        if not found_item:
+            structured = self._extract_error_from_json_obj(obj)
+            if structured:
+                return result, structured
         return result, last_err
 
     async def _extract_output_image_from_responses_item(
@@ -719,6 +758,8 @@ class ChatGPTResponsesImagePlugin(Star):
                 return None, "返回图片 base64 解码失败。"
             if not self._within_image_limit(len(data)):
                 return None, "返回图片超过插件大小限制。"
+            if not self._looks_like_supported_image_data(data):
+                return None, "返回图片不是有效的 PNG/JPEG/WEBP/GIF 数据。"
             mime = self._guess_image_mime(data, str(item.get("output_format") or output_format_hint or "png"))
             return OutputImage(data=data, mime_type=mime, revised_prompt=revised_prompt), ""
 
@@ -731,6 +772,8 @@ class ChatGPTResponsesImagePlugin(Star):
                     return None, "返回 Data URL 解析失败。"
                 if not self._within_image_limit(len(data)):
                     return None, "返回图片超过插件大小限制。"
+                if not self._looks_like_supported_image_data(data):
+                    return None, "返回 Data URL 不是有效图片。"
                 return OutputImage(data=data, mime_type=mime, revised_prompt=revised_prompt), ""
             data = await self._load_image_bytes(source)
             if data is None:
@@ -757,6 +800,8 @@ class ChatGPTResponsesImagePlugin(Star):
             return None, "partial_image base64 解码失败。"
         if not self._within_image_limit(len(data)):
             return None, "partial_image 超过插件大小限制。"
+        if not self._looks_like_supported_image_data(data):
+            return None, "partial_image 不是有效图片。"
         mime = self._guess_image_mime(data, str(payload.get("output_format") or output_format_hint or "png"))
         revised_prompt = str(payload.get("revised_prompt") or "").strip()
         return OutputImage(data=data, mime_type=mime, revised_prompt=revised_prompt), ""
@@ -891,8 +936,11 @@ class ChatGPTResponsesImagePlugin(Star):
     ) -> tuple[list[InputImage], str]:
         images: list[InputImage] = []
         seen_digests: set[str] = set()
-        for source in sources[:limit]:
-            image, _ = await self._load_single_input_image_for_event(event, source)
+        last_err = ""
+        for source in sources:
+            if len(images) >= limit:
+                break
+            image, err = await self._load_single_input_image_for_event(event, source)
             if image is not None:
                 digest = hashlib.sha256(image.data).hexdigest()
                 if digest in seen_digests:
@@ -900,8 +948,11 @@ class ChatGPTResponsesImagePlugin(Star):
                     continue
                 seen_digests.add(digest)
                 images.append(image)
+            elif err:
+                last_err = err
+                self._debug(f"input_image_load_failed source={self._safe_ref(source)} err={err}")
         if not images:
-            return [], "读取输入图片失败，请重发原图、改用可访问 URL，或检查图片是否超过 20MB。"
+            return [], last_err or "读取输入图片失败，请重发原图、改用可访问 URL，或检查图片是否超过 20MB。"
         return images, ""
 
     async def _load_single_input_image_for_event(
@@ -915,6 +966,8 @@ class ChatGPTResponsesImagePlugin(Star):
         if data is None:
             return None, f"读取图片失败：{source}"
         mime_type = self._guess_image_mime(data, self._guess_mime_from_name(resolved))
+        if mime_type not in self._INPUT_MIME_TYPES:
+            return None, f"输入图片格式不支持：{mime_type or 'unknown'}"
         filename = self._build_upload_filename(resolved or source, mime_type)
         return InputImage(source=resolved or source, data=data, mime_type=mime_type, filename=filename), ""
 
@@ -1283,6 +1336,8 @@ class ChatGPTResponsesImagePlugin(Star):
             data, _ = self._decode_data_url(text)
             if data is None or not self._within_image_limit(len(data)):
                 return None
+            if not self._looks_like_supported_image_data(data):
+                return None
             return data
 
         if text.startswith("base64://"):
@@ -1291,6 +1346,8 @@ class ChatGPTResponsesImagePlugin(Star):
             except Exception:
                 return None
             if not self._within_image_limit(len(data)):
+                return None
+            if not self._looks_like_supported_image_data(data):
                 return None
             return data
 
@@ -1305,7 +1362,10 @@ class ChatGPTResponsesImagePlugin(Star):
         try:
             if path.stat().st_size > self._max_image_bytes():
                 return None
-            return path.read_bytes()
+            data = path.read_bytes()
+            if not self._within_image_limit(len(data)) or not self._looks_like_supported_image_data(data):
+                return None
+            return data
         except Exception:
             return None
 
@@ -1330,7 +1390,13 @@ class ChatGPTResponsesImagePlugin(Star):
                             if total > max_bytes:
                                 return None
                             chunks.append(chunk)
-                        return b"".join(chunks)
+                        data = b"".join(chunks)
+                        if not self._looks_like_supported_image_data(data):
+                            self._debug(
+                                f"http_image_invalid_data status={resp.status_code} ctype={resp.headers.get('content-type', '')} url={self._safe_ref(url)}"
+                            )
+                            continue
+                        return data
             except Exception:
                 continue
         return None
@@ -1388,11 +1454,23 @@ class ChatGPTResponsesImagePlugin(Star):
             return "image/jpeg"
         if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
             return "image/webp"
+        if data.startswith((b"GIF87a", b"GIF89a")):
+            return "image/gif"
         if fallback:
             if "/" in fallback:
                 return fallback
             return self._mime_from_output_format(fallback)
         return "image/png"
+
+    def _looks_like_supported_image_data(self, data: bytes) -> bool:
+        if not data:
+            return False
+        return (
+            data.startswith(b"\x89PNG")
+            or data.startswith(b"\xff\xd8")
+            or (len(data) >= 12 and data.startswith(b"RIFF") and data[8:12] == b"WEBP")
+            or data.startswith((b"GIF87a", b"GIF89a"))
+        )
 
     def _guess_mime_from_name(self, source: str) -> str:
         guessed, _ = mimetypes.guess_type(source)
@@ -1527,7 +1605,7 @@ class ChatGPTResponsesImagePlugin(Star):
                     "支持直接附图、回复图片、重复 --image、多图 image=a.png,b.png",
                     f"可选参数：{self._supported_options_text(include_image=False)}",
                     f"已移除参数：{self._removed_options_text()}，传入会报错",
-                    "固定走 /v1/responses + image_generation + SSE，只发送最终成图；当前不支持 --mask",
+                    "固定走 Responses + image_generation + SSE，只发送最终成图；当前不支持 --mask",
                 ],
                 icon="🖼️",
             )
@@ -1538,7 +1616,7 @@ class ChatGPTResponsesImagePlugin(Star):
                 f"可选参数：{self._supported_options_text(include_image=False)}",
                 f"已移除参数：{self._removed_options_text()}，传入会报错",
                 "示例：gpt生图 史诗感动画海报 size=2160x3840 format=png",
-                "固定走 /v1/responses + image_generation + SSE，只发送最终成图",
+                "固定走 Responses + image_generation + SSE，只发送最终成图",
             ],
             icon="✨",
         )
@@ -1588,6 +1666,9 @@ class ChatGPTResponsesImagePlugin(Star):
         raw = (text or "").strip()
         lower = raw.lower()
 
+        json_summary = self._extract_json_error_summary(raw, status_code, headers)
+        if json_summary:
+            return json_summary
         if "image-only model" in lower or "responses-capable text model" in lower:
             return "model 不能填 gpt-image-2；请使用 gpt-5.4 这类 Responses 文本模型，图片模型由 image_generation 工具自动调用。"
         if status_code == 401 or "unauthorized" in lower:
@@ -1603,10 +1684,12 @@ class ChatGPTResponsesImagePlugin(Star):
             if headers is not None:
                 retry_after = str(headers.get("Retry-After", "")).strip()
             return f"请求过于频繁，请稍后再试。{(' Retry-After=' + retry_after) if retry_after else ''}".strip()
-        if status_code in {520, 521, 522, 523, 524, 525, 526, 530}:
+        if status_code in {500, 504, 520, 521, 522, 523, 524, 525, 526, 530}:
             html_summary = self._extract_html_error_summary(raw, status_code)
             if html_summary:
                 return html_summary
+            if status_code == 504:
+                return "上游网关超时。请检查 API 域名是否仍经过 CDN/WAF，或源站生成任务是否超过代理超时。"
             return "上游网关/CDN 返回错误页，请检查当前服务器到图片接口的连通性或 WAF/CDN 策略。"
         if status_code == 502:
             return "上游暂不支持当前请求形态，请检查是否仍带有参考实现之外的 tool 字段。"
@@ -1622,6 +1705,173 @@ class ChatGPTResponsesImagePlugin(Star):
         if raw:
             return raw[:320]
         return default
+
+    def _extract_json_error_summary(
+        self,
+        raw: str,
+        status_code: int | None = None,
+        headers: httpx.Headers | None = None,
+    ) -> str:
+        text = (raw or "").strip()
+        if not text or not text.startswith(("{", "[")):
+            return ""
+        try:
+            obj = json.loads(text)
+        except Exception:
+            return ""
+        return self._extract_error_from_json_obj(obj, status_code=status_code, headers=headers)
+
+    def _extract_error_from_json_obj(
+        self,
+        obj: Any,
+        status_code: int | None = None,
+        headers: httpx.Headers | None = None,
+    ) -> str:
+        if not isinstance(obj, dict):
+            return ""
+
+        err_obj = obj.get("error")
+        if isinstance(err_obj, dict):
+            message = str(err_obj.get("message") or err_obj.get("detail") or "").strip()
+            if message:
+                return self._format_api_error_message(
+                    message=message,
+                    status_code=status_code or self._int_or_none(obj.get("status")),
+                    error_type=str(err_obj.get("type") or "").strip(),
+                    code=str(err_obj.get("code") or "").strip(),
+                    param=str(err_obj.get("param") or "").strip(),
+                    headers=headers,
+                )
+
+        response_obj = obj.get("response")
+        if isinstance(response_obj, dict):
+            nested = self._extract_error_from_json_obj(response_obj, status_code=status_code, headers=headers)
+            if nested:
+                return nested
+
+        if obj.get("cloudflare_error") is True or obj.get("error_name") or obj.get("ray_id"):
+            status = self._int_or_none(obj.get("status")) or status_code
+            retry_after = self._extract_retry_after_value(headers=headers, body=obj)
+            error_name = str(obj.get("error_name") or "").strip()
+            title = str(obj.get("title") or "").strip()
+            detail = str(obj.get("detail") or "").strip()
+            zone = str(obj.get("zone") or "").strip()
+            ray_id = str(obj.get("ray_id") or "").strip()
+            if status == 504 or "timeout" in f"{title} {detail} {error_name}".lower():
+                base = "Cloudflare 504：源站响应超时"
+            else:
+                base = f"Cloudflare {status or '错误'}：{title or error_name or '代理层错误'}"
+            parts = [base]
+            if detail:
+                parts.append(self._truncate_text(detail, 120))
+            if retry_after:
+                parts.append(f"建议等待 {retry_after:g}s 后重试")
+            if zone:
+                parts.append(f"zone={zone}")
+            if ray_id:
+                parts.append(f"ray={ray_id}")
+            return "；".join(parts)
+
+        message = str(obj.get("message") or obj.get("detail") or obj.get("title") or "").strip()
+        if message:
+            return self._format_api_error_message(
+                message=message,
+                status_code=status_code or self._int_or_none(obj.get("status")),
+                error_type=str(obj.get("type") or obj.get("error_type") or "").strip(),
+                code=str(obj.get("code") or obj.get("error_code") or "").strip(),
+                param=str(obj.get("param") or "").strip(),
+                headers=headers,
+            )
+        return ""
+
+    def _format_api_error_message(
+        self,
+        *,
+        message: str,
+        status_code: int | None = None,
+        error_type: str = "",
+        code: str = "",
+        param: str = "",
+        headers: httpx.Headers | None = None,
+    ) -> str:
+        lower = message.lower()
+        if "image-only model" in lower or "responses-capable text model" in lower:
+            return "model 不能填 gpt-image-2；请使用 gpt-5.4 这类 Responses 文本模型，图片模型由 image_generation 工具自动调用。"
+        if status_code == 401 or "unauthorized" in lower:
+            return "鉴权失败，请检查 api_key。"
+        if status_code == 403:
+            return f"请求被拒绝：{self._truncate_text(message, 180)}"
+        if status_code == 404:
+            return f"接口不存在：{self._truncate_text(message, 180)}"
+        if status_code == 413:
+            return "请求体或图片过大，请压缩输入图片或减少多图数量后再试。"
+        if status_code == 429:
+            retry_after = self._extract_retry_after_value(headers=headers)
+            suffix = f" 建议等待 {retry_after:g}s 后重试。" if retry_after else ""
+            return f"请求过于频繁或额度受限。{suffix}".strip()
+
+        meta: list[str] = []
+        if status_code:
+            meta.append(f"HTTP {status_code}")
+        if error_type:
+            meta.append(error_type)
+        if code:
+            meta.append(f"code={code}")
+        if param:
+            meta.append(f"param={param}")
+        message_text = self._truncate_text(message, 240)
+        return f"{message_text}{('（' + ' · '.join(meta) + '）') if meta else ''}"
+
+    def _retry_delay_seconds(self, headers: dict[str, str], body_text: str, fallback: float) -> float:
+        retry_after = self._extract_retry_after_value(headers=headers, body_text=body_text)
+        delay = retry_after if retry_after and retry_after > 0 else fallback
+        cap = max(1.0, float(self._cfg("max_retry_after_seconds", 30.0)))
+        return min(max(0.2, float(delay)), cap)
+
+    def _extract_retry_after_value(
+        self,
+        headers: dict[str, str] | httpx.Headers | None = None,
+        body: dict[str, Any] | None = None,
+        body_text: str = "",
+    ) -> float:
+        values: list[Any] = []
+        if headers is not None:
+            try:
+                values.append(headers.get("Retry-After"))
+                values.append(headers.get("retry-after"))
+            except Exception:
+                pass
+        if isinstance(body, dict):
+            values.append(body.get("retry_after"))
+            values.append(body.get("retryAfter"))
+        if body_text:
+            try:
+                parsed = json.loads(body_text)
+                if isinstance(parsed, dict):
+                    values.append(parsed.get("retry_after"))
+                    values.append(parsed.get("retryAfter"))
+            except Exception:
+                pass
+        for value in values:
+            if value is None or value == "":
+                continue
+            try:
+                return max(0.0, float(value))
+            except Exception:
+                continue
+        return 0.0
+
+    def _int_or_none(self, value: Any) -> int | None:
+        try:
+            return int(value)
+        except Exception:
+            return None
+
+    def _truncate_text(self, text: str, limit: int) -> str:
+        value = re.sub(r"\s+", " ", str(text or "")).strip()
+        if len(value) <= limit:
+            return value
+        return value[: max(0, limit - 3)] + "..."
 
     def _extract_html_error_summary(self, raw: str, status_code: int | None = None) -> str:
         text = (raw or "").strip()
@@ -1700,7 +1950,7 @@ class ChatGPTResponsesImagePlugin(Star):
         return max(1, int(self._cfg("max_image_megabytes", 20))) * 1024 * 1024
 
     def _within_image_limit(self, size: int) -> bool:
-        return 0 <= int(size) <= self._max_image_bytes()
+        return 0 < int(size) <= self._max_image_bytes()
 
     def _supported_options_text(self, *, include_image: bool = True) -> str:
         keys = self._VISIBLE_SUPPORTED_OPTIONS if include_image else tuple(
@@ -1720,13 +1970,13 @@ class ChatGPTResponsesImagePlugin(Star):
             [
                 "gpt生图 <prompt>  文生图",
                 "gpt改图 <prompt>  图生图 / 多图改图",
-                "gpt图状态  查看接口、默认参数和队列状态",
+                "gpt图状态  查看默认参数和队列状态",
                 "gpt图帮助  查看这份帮助",
                 f"支持参数：{self._supported_options_text()}",
                 f"已移除参数：{self._removed_options_text()}",
                 "图生图支持：直接附图、回复图片、重复 --image、多图 image=a.png,b.png",
                 f"size 支持 auto 或任意 <宽>x<高>，例如 {self._HELP_SIZE_EXAMPLES}",
-                "固定走 /v1/responses + image_generation + SSE；只发送最终成图，必要时按配置回退最后一张 partial_image",
+                "固定走 Responses + image_generation + SSE；只发送最终成图，必要时按配置回退最后一张 partial_image",
             ],
             icon="📘",
         )
