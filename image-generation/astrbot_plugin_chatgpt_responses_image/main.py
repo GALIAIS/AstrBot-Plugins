@@ -108,10 +108,12 @@ class ChatGPTResponsesImagePlugin(Star):
 
     @filter.command("gpt图帮助", alias={"gptimghelp", "chatgpt图帮助"})
     async def help_command(self, event: AstrMessageEvent):
+        event.stop_event()
         yield event.plain_result(self._help_text())
 
     @filter.command("gpt图状态", alias={"gptimgstatus"})
     async def status_command(self, event: AstrMessageEvent):
+        event.stop_event()
         async with self._queue_state_lock:
             queue_wait = max(0, self._queue_waiting)
             queue_running = max(0, self._queue_running)
@@ -132,6 +134,7 @@ class ChatGPTResponsesImagePlugin(Star):
 
     @filter.command("gpt生图", alias={"gpt画图", "chatgpt生图"})
     async def generate_command(self, event: AstrMessageEvent):
+        event.stop_event()
         prompt, opts, err = self._parse_args(self._rest_after_command(event.message_str))
         if err:
             yield event.plain_result(self._format_error_card("参数解析失败", err))
@@ -144,6 +147,7 @@ class ChatGPTResponsesImagePlugin(Star):
 
     @filter.command("gpt改图", alias={"gpti2i", "chatgpt改图"})
     async def edit_command(self, event: AstrMessageEvent):
+        event.stop_event()
         prompt, opts, err = self._parse_args(self._rest_after_command(event.message_str))
         if err:
             yield event.plain_result(self._format_error_card("参数解析失败", err))
