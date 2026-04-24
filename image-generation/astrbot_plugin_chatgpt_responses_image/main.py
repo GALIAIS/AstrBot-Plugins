@@ -1644,16 +1644,13 @@ class ChatGPTResponsesImagePlugin(Star):
 
     def _format_card(self, title: str, lines: list[str], icon: str = "ℹ️") -> str:
         clean_lines = [str(line).strip() for line in lines if str(line).strip()]
+        heading = f"{icon} {title}".strip()
         if not clean_lines:
-            return f"╭─ {icon} {title}\n╰ 暂无内容"
-        card_lines = [f"╭─ {icon} {title}"]
-        for idx, line in enumerate(clean_lines):
-            prefix = "╰" if idx == len(clean_lines) - 1 else "├"
-            card_lines.append(f"{prefix} {line}")
-        return "\n".join(card_lines)
+            return f"{heading}\n暂无内容"
+        return "\n".join([heading, *clean_lines])
 
     def _format_error_card(self, title: str, detail: str) -> str:
-        return self._format_card(title, [detail], icon="⚠️")
+        return self._format_card(title, [detail], icon="❌")
 
     def _format_queue_card(self, wait_num: int) -> str:
         return self._format_card(

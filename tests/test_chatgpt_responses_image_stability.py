@@ -204,6 +204,26 @@ class PluginStabilityTests(unittest.TestCase):
         self.assertNotIn("├", text)
         self.assertNotIn("╰", text)
 
+    def test_all_cards_use_plain_new_format(self):
+        plugin = self.make_plugin()
+
+        samples = [
+            plugin._format_error_card("生图失败", "上游超时"),
+            plugin._format_queue_card(2),
+            plugin._format_usage_card("generate"),
+            plugin._format_usage_card("edit"),
+            plugin._help_text(),
+        ]
+
+        for sample in samples:
+            self.assertNotIn("╭", sample)
+            self.assertNotIn("├", sample)
+            self.assertNotIn("╰", sample)
+            self.assertNotIn("⚠️", sample)
+        self.assertIn("❌ 生图失败", samples[0])
+        self.assertIn("⏳ 已进入生图队列", samples[1])
+        self.assertIn("📘 ChatGPT Images 指令帮助", samples[-1])
+
 
 if __name__ == "__main__":
     unittest.main()
