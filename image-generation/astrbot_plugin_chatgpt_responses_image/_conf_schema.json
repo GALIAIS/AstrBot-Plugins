@@ -105,6 +105,11 @@
     "type": "float",
     "default": 30.0
   },
+  "send_image_and_text_separately": {
+    "description": "图片和完成信息分开发送；部分平台合并图片+文字时预览可能裁切，开启后更稳",
+    "type": "bool",
+    "default": false
+  },
   "debug": {
     "description": "输出调试日志（记录 transport、SSE 解析、回复取图等）",
     "type": "bool",

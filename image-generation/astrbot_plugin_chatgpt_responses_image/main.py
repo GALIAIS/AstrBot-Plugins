@@ -262,9 +262,17 @@ class ChatGPTResponsesImagePlugin(Star):
                 mask_used=mask_image is not None,
                 elapsed=time.perf_counter() - t0,
             )
-            chain: list[Any] = [Comp.Image(file=path) for path in saved_paths]
-            chain.append(Comp.Plain(info))
-            results.append(event.chain_result(chain))
+            for path in saved_paths:
+                self._debug_saved_image(path)
+
+            if self._to_bool(self._cfg("send_image_and_text_separately", False), False):
+                for path in saved_paths:
+                    results.append(event.chain_result([Comp.Image(file=path)]))
+                results.append(event.plain_result(info))
+            else:
+                chain: list[Any] = [Comp.Image(file=path) for path in saved_paths]
+                chain.append(Comp.Plain(info))
+                results.append(event.chain_result(chain))
             return results
         finally:
             await self._release_queue_ticket()
@@ -1521,6 +1529,78 @@ class ChatGPTResponsesImagePlugin(Star):
         path.mkdir(parents=True, exist_ok=True)
         return path
 
+    def _debug_saved_image(self, path: str) -> None:
+        if not self._debug_enabled():
+            return
+        try:
+            p = Path(path)
+            if not p.exists():
+                self._debug(f"saved_image_missing path={self._safe_ref(path)}")
+                return
+            size = p.stat().st_size
+            width, height = self._read_image_dimensions(p.read_bytes())
+            self._debug(f"saved_image path={self._safe_ref(path)} bytes={size} size={width}x{height}")
+        except Exception as exc:
+            self._debug(f"saved_image_probe_failed path={self._safe_ref(path)} err={exc}")
+
+    def _read_image_dimensions(self, data: bytes) -> tuple[int, int]:
+        try:
+            if data.startswith(b"\x89PNG") and len(data) >= 24:
+                return int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+            if data.startswith(b"RIFF") and len(data) >= 30 and data[8:12] == b"WEBP":
+                return self._read_webp_dimensions(data)
+            if data.startswith(b"\xff\xd8"):
+                return self._read_jpeg_dimensions(data)
+            if data.startswith((b"GIF87a", b"GIF89a")) and len(data) >= 10:
+                return int.from_bytes(data[6:8], "little"), int.from_bytes(data[8:10], "little")
+        except Exception:
+            return 0, 0
+        return 0, 0
+
+    def _read_jpeg_dimensions(self, data: bytes) -> tuple[int, int]:
+        i = 2
+        while i + 9 < len(data):
+            if data[i] != 0xFF:
+                i += 1
+                continue
+            marker = data[i + 1]
+            i += 2
+            while marker == 0xFF and i < len(data):
+                marker = data[i]
+                i += 1
+            if marker in {0xD8, 0xD9, 0x01} or 0xD0 <= marker <= 0xD7:
+                continue
+            if i + 2 > len(data):
+                break
+            segment_len = int.from_bytes(data[i : i + 2], "big")
+            if segment_len < 2 or i + segment_len > len(data):
+                break
+            if marker in {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF}:
+                if i + 7 <= len(data):
+                    return int.from_bytes(data[i + 5 : i + 7], "big"), int.from_bytes(data[i + 3 : i + 5], "big")
+                break
+            i += segment_len
+        return 0, 0
+
+    def _read_webp_dimensions(self, data: bytes) -> tuple[int, int]:
+        chunk = data[12:16]
+        if chunk == b"VP8X" and len(data) >= 30:
+            width = int.from_bytes(data[24:27], "little") + 1
+            height = int.from_bytes(data[27:30], "little") + 1
+            return width, height
+        if chunk == b"VP8 " and len(data) >= 30:
+            sig = data[23:26]
+            if sig == b"\x9d\x01\x2a":
+                width = int.from_bytes(data[26:28], "little") & 0x3FFF
+                height = int.from_bytes(data[28:30], "little") & 0x3FFF
+                return width, height
+        if chunk == b"VP8L" and len(data) >= 25:
+            b0, b1, b2, b3 = data[21], data[22], data[23], data[24]
+            width = 1 + (((b1 & 0x3F) << 8) | b0)
+            height = 1 + ((b3 << 6) | (b2 >> 2) | ((b1 & 0xC0) << 6))
+            return width, height
+        return 0, 0
+
     def _format_success_info(
         self,
         *,
@@ -1548,30 +1628,19 @@ class ChatGPTResponsesImagePlugin(Star):
         if api_result.used_partial_fallback:
             extra_items.append("已回退 partial")
 
-        revised_prompt = ""
-        for item in api_result.images:
-            if item.revised_prompt and item.revised_prompt != revised_prompt:
-                revised_prompt = item.revised_prompt
-                break
-
-        card_lines = [
-            "╭─ ✨ 图像生成完成",
-            f"├ 模型：{model}",
+        lines = [
+            "✅ 图像生成完成",
+            f"模型：{model}",
             (
-                f"├ 模式：{action_name} · "
+                f"模式：{action_name} · "
                 f"尺寸：{self._display_size(size)} · "
                 f"格式：{self._display_output_format(output_format)}"
             ),
-            f"├ 响应：Responses SSE · 数量：{len(api_result.images)} 张 · 耗时：{elapsed:.2f}s",
+            f"响应：Responses SSE · 数量：{len(api_result.images)} 张 · 耗时：{elapsed:.2f}s",
         ]
         if extra_items:
-            card_lines.append(f"├ 细节：{' · '.join(extra_items)}")
-        if revised_prompt:
-            brief = revised_prompt if len(revised_prompt) <= 160 else revised_prompt[:157] + "..."
-            card_lines.append(f"├ 修订：{brief}")
-        if card_lines:
-            card_lines[-1] = re.sub(r"^├", "╰", card_lines[-1], count=1)
-        return "\n".join(card_lines)
+            lines.append(f"细节：{' · '.join(extra_items)}")
+        return "\n".join(lines)
 
     def _format_card(self, title: str, lines: list[str], icon: str = "ℹ️") -> str:
         clean_lines = [str(line).strip() for line in lines if str(line).strip()]

@@ -177,6 +177,33 @@ class PluginStabilityTests(unittest.TestCase):
         self.assertIn("invalid_request_error", summary)
         self.assertNotIn('{"response"', summary)
 
+    def test_success_info_hides_revised_prompt_and_box_art(self):
+        plugin = self.make_plugin()
+        result = self.module.ImageAPIResult(
+            images=[self.module.OutputImage(data=PNG_1X1, mime_type="image/png", revised_prompt="rewritten prompt")],
+            model="gpt-5.4",
+            tool_model="gpt-image-2",
+            size="auto",
+            output_format="jpeg",
+            completed_status="completed",
+        )
+
+        text = plugin._format_success_info(
+            action="generate",
+            request_opts={"model": "gpt-5.4", "size": "auto", "output_format": "jpeg"},
+            api_result=result,
+            input_image_count=0,
+            mask_used=False,
+            elapsed=1.23,
+        )
+
+        self.assertIn("✅ 图像生成完成", text)
+        self.assertNotIn("修订", text)
+        self.assertNotIn("rewritten prompt", text)
+        self.assertNotIn("╭", text)
+        self.assertNotIn("├", text)
+        self.assertNotIn("╰", text)
+
 
 if __name__ == "__main__":
     unittest.main()

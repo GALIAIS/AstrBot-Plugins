@@ -57,6 +57,7 @@
 - `max_concurrency` / `max_queue_waiting`
 - `timeout` / `request_retries` / `retry_backoff_seconds`
 - `max_retry_after_seconds`：遇到 Retry-After 时单次最多等待秒数
+- `send_image_and_text_separately`：图片和完成信息分开发送；遇到平台合并图文预览裁切时可开启
 
 ## 行为说明
 
@@ -65,3 +66,4 @@
 - `image_generation` tool 当前只发送 `type / size / output_format`，保持与参考实现一致
 - 当前版本不支持 `mask / inpainting`
 - 即使服务端返回 partial，插件也只会发送最终成图
+- 默认不显示上游 `revised_prompt` 修订内容，避免回复过长影响图片预览
