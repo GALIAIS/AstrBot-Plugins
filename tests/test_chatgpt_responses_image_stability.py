@@ -31,6 +31,10 @@ def install_astrbot_stubs() -> None:
     class AstrMessageEvent:
         pass
 
+    class MessageChain:
+        def __init__(self, chain=None):
+            self.chain = chain or []
+
     class Star:
         def __init__(self, context=None):
             self.context = context
@@ -60,6 +64,7 @@ def install_astrbot_stubs() -> None:
     api.AstrBotConfig = dict
     api.logger = Logger()
     event_mod.AstrMessageEvent = AstrMessageEvent
+    event_mod.MessageChain = MessageChain
     event_mod.filter = Filter
     star_mod.Context = object
     star_mod.Star = Star
@@ -339,8 +344,12 @@ class PluginStabilityTests(unittest.TestCase):
         order = []
 
         class Event:
+            async def send(self, result):
+                order.append(("sent", result))
             def plain_result(self, text):
                 return ("plain", text)
+            def chain_result(self, chain):
+                return ("chain", chain)
 
         async def fake_request(**kwargs):
             order.append("api_called")
@@ -351,14 +360,64 @@ class PluginStabilityTests(unittest.TestCase):
             )
             return True, result, ""
 
-        plugin._request_responses_api = fake_request
-        gen = plugin._handle_request(Event(), "cat", {}, "generate")
-        first = asyncio.run(gen.__anext__())
+        async def run_once():
+            plugin._request_responses_api = fake_request
+            results = []
+            async for item in plugin._handle_request(Event(), "cat", {}, "generate"):
+                results.append(item)
+            await asyncio.gather(*list(plugin._background_tasks))
+            return results
 
-        self.assertEqual(order, [])
-        self.assertEqual(first[0], "plain")
-        self.assertIn("⏳ 已收到指令，正在执行", first[1])
-        asyncio.run(gen.aclose())
+        results = asyncio.run(run_once())
+
+        self.assertEqual(results[0][0], "plain")
+        self.assertIn("⏳ 已收到指令，正在执行", results[0][1])
+        self.assertIn("api_called", order)
+        self.assertTrue(any(isinstance(item, tuple) and item[0] == "sent" for item in order))
+
+    def test_max_concurrency_starts_multiple_background_jobs(self):
+        plugin = self.make_plugin({"api_key": "test", "max_concurrency": 2})
+        started = 0
+        release = asyncio.Event()
+
+        class Event:
+            async def send(self, result):
+                pass
+            def plain_result(self, text):
+                return ("plain", text)
+            def chain_result(self, chain):
+                return ("chain", chain)
+
+        async def fake_request(**kwargs):
+            nonlocal started
+            started += 1
+            await release.wait()
+            result = self.module.ImageAPIResult(
+                images=[self.module.OutputImage(data=PNG_1X1, mime_type="image/png")],
+                size="1024x1024",
+                output_format="png",
+            )
+            return True, result, ""
+
+        async def drain(gen):
+            return [item async for item in gen]
+
+        async def scenario():
+            plugin._request_responses_api = fake_request
+            await asyncio.gather(
+                drain(plugin._handle_request(Event(), "cat 1", {}, "generate")),
+                drain(plugin._handle_request(Event(), "cat 2", {}, "generate")),
+            )
+            await asyncio.sleep(0.05)
+            running = plugin._queue_running
+            release.set()
+            await asyncio.gather(*list(plugin._background_tasks))
+            return running, started
+
+        running, started_count = asyncio.run(scenario())
+
+        self.assertEqual(started_count, 2)
+        self.assertEqual(running, 2)
 
 
 if __name__ == "__main__":

@@ -17,7 +17,7 @@
 - 图生图：`gpt改图`
 - 多图输入：支持重复 `--image`、`image=a.png,b.png`、直接附图、回复图片
 - 输入图去重：同一张图以 URL、file_id、本地路径多种形式出现时，只按实际图片内容保留一次
-- 队列系统：支持并发上限与排队上限
+- 队列系统：支持后台并发生成，`max_concurrency` 控制同时执行任务数，超过上限才排队
 - 错误处理：识别 OpenAI/中转站 JSON 错误、Cloudflare 5xx/504、HTML 错页、429 Retry-After、无效图片与超限图片
 - Codex 风格请求头：支持 `user_agent` / `version` / `originator` / `session_id`
 
@@ -54,7 +54,8 @@
 - `allow_partial_fallback`：未拿到最终图时是否回退最后一张 partial
 - `max_input_images`：单次改图最多输入图数量
 - `max_image_megabytes`：输入图/下载图大小上限，默认 20MB
-- `max_concurrency` / `max_queue_waiting`
+- `max_concurrency`：同时执行的生图任务数；大于 1 时后台并发生成，完成后主动发送结果
+- `max_queue_waiting`：最大排队等待任务数
 - `timeout`：HTTP / curl 超时秒数
 - `server_error_retries` / `server_error_retry_backoff_seconds`：仅对上游 `server_error` / HTTP 5xx 临时服务端错误自动重试，安全拒绝不重试
 - `send_image_and_text_separately`：图片和完成信息分开发送；遇到平台合并图文预览裁切时可开启

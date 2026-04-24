@@ -100,6 +100,7 @@ class ChatGPTResponsesImagePlugin(Star):
         self._queue_state_lock = asyncio.Lock()
         self._queue_waiting = 0
         self._queue_running = 0
+        self._background_tasks: set[asyncio.Task] = set()
 
     async def initialize(self):
         logger.info("astrbot_plugin_chatgpt_responses_image 已初始化")
@@ -179,7 +180,6 @@ class ChatGPTResponsesImagePlugin(Star):
             return
 
         input_images: list[InputImage] = []
-        mask_image: InputImage | None = None
         if action == "edit":
             max_input_images = max(1, int(self._cfg("max_input_images", 4)))
             image_sources: list[str] = []
@@ -216,7 +216,7 @@ class ChatGPTResponsesImagePlugin(Star):
                 )
                 return
 
-        ok_slot, wait_num = await self._acquire_queue_ticket()
+        ok_slot, wait_num = await self._reserve_queue_slot()
         if not ok_slot:
             yield event.plain_result(
                 self._format_error_card(
@@ -226,17 +226,42 @@ class ChatGPTResponsesImagePlugin(Star):
             )
             return
 
-        try:
-            yield event.plain_result(
-                self._format_accepted_card(
-                    action=action,
-                    request_opts=request_opts,
-                    input_image_count=len(input_images),
-                )
+        yield event.plain_result(
+            self._format_accepted_card(
+                action=action,
+                request_opts=request_opts,
+                input_image_count=len(input_images),
             )
-            if wait_num > 0:
-                yield event.plain_result(self._format_queue_card(wait_num))
+        )
+        if wait_num > 0:
+            yield event.plain_result(self._format_queue_card(wait_num))
 
+        task = asyncio.create_task(
+            self._run_generation_task(
+                event=event,
+                api_key=api_key,
+                prompt=prompt,
+                request_opts=request_opts,
+                action=action,
+                input_images=input_images,
+            )
+        )
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+        return
+
+    async def _run_generation_task(
+        self,
+        *,
+        event: AstrMessageEvent,
+        api_key: str,
+        prompt: str,
+        request_opts: dict[str, Any],
+        action: str,
+        input_images: list[InputImage],
+    ) -> None:
+        try:
+            await self._wait_for_reserved_queue_slot()
             t0 = time.perf_counter()
             payload = self._build_responses_payload(
                 prompt=prompt,
@@ -250,9 +275,8 @@ class ChatGPTResponsesImagePlugin(Star):
                 output_format_hint=str(request_opts.get("output_format") or "png"),
                 session_id=str(request_opts.get("session_id") or ""),
             )
-
             if not ok or api_result is None:
-                yield event.plain_result(self._format_error_card("生图失败", req_err))
+                await self._send_message_result(event, event.plain_result(self._format_error_card("生图失败", req_err)))
                 return
 
             saved_paths: list[str] = []
@@ -262,7 +286,7 @@ class ChatGPTResponsesImagePlugin(Star):
                 if out:
                     saved_paths.append(out)
             if not saved_paths:
-                yield event.plain_result(self._format_error_card("保存失败", "本地保存图片失败。"))
+                await self._send_message_result(event, event.plain_result(self._format_error_card("保存失败", "本地保存图片失败。")))
                 return
 
             info = self._format_success_info(
@@ -270,7 +294,7 @@ class ChatGPTResponsesImagePlugin(Star):
                 request_opts=request_opts,
                 api_result=api_result,
                 input_image_count=len(input_images),
-                mask_used=mask_image is not None,
+                mask_used=False,
                 elapsed=time.perf_counter() - t0,
             )
             for path in saved_paths:
@@ -278,15 +302,30 @@ class ChatGPTResponsesImagePlugin(Star):
 
             if self._to_bool(self._cfg("send_image_and_text_separately", False), False):
                 for path in saved_paths:
-                    yield event.chain_result([Comp.Image(file=path)])
-                yield event.plain_result(info)
+                    await self._send_message_result(event, event.chain_result([Comp.Image(file=path)]))
+                await self._send_message_result(event, event.plain_result(info))
             else:
                 chain: list[Any] = [Comp.Image(file=path) for path in saved_paths]
                 chain.append(Comp.Plain(info))
-                yield event.chain_result(chain)
-            return
+                await self._send_message_result(event, event.chain_result(chain))
+        except Exception as exc:
+            logger.error(f"chatgpt image background task failed: {exc}")
+            try:
+                await self._send_message_result(event, event.plain_result(self._format_error_card("生图失败", str(exc))))
+            except Exception:
+                pass
         finally:
             await self._release_queue_ticket()
+
+    async def _send_message_result(self, event: AstrMessageEvent, result: Any) -> None:
+        if hasattr(event, "send"):
+            await event.send(result)
+            return
+        origin = getattr(event, "unified_msg_origin", "")
+        if origin and self.context and hasattr(self.context, "send_message"):
+            await self.context.send_message(origin, result)
+            return
+        raise RuntimeError("当前 AstrBot 事件不支持后台发送消息")
 
     def _resolve_request_options(self, opts: dict[str, Any]) -> tuple[dict[str, Any], str]:
         model = str(opts.get("model") or self._cfg("default_model", "gpt-5.4")).strip() or "gpt-5.4"
@@ -989,18 +1028,19 @@ class ChatGPTResponsesImagePlugin(Star):
             return True
         return False
 
-    async def _acquire_queue_ticket(self) -> tuple[bool, int]:
+    async def _reserve_queue_slot(self) -> tuple[bool, int]:
         async with self._queue_state_lock:
             if self._queue_running >= self._max_concurrency and self._queue_waiting >= self._max_queue_waiting:
                 return False, self._queue_waiting
             wait_num = self._queue_running + self._queue_waiting
             self._queue_waiting += 1
+        return True, wait_num
 
+    async def _wait_for_reserved_queue_slot(self) -> None:
         await self._queue_semaphore.acquire()
         async with self._queue_state_lock:
             self._queue_waiting = max(0, self._queue_waiting - 1)
             self._queue_running += 1
-        return True, wait_num
 
     async def _release_queue_ticket(self) -> None:
         async with self._queue_state_lock:

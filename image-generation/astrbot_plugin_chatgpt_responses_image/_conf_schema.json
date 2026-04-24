@@ -76,7 +76,7 @@
     "default": 20
   },
   "max_concurrency": {
-    "description": "并发生成任务数",
+    "description": "同时执行的生图任务数；大于 1 时会后台并发生成，完成后主动发送结果",
     "type": "int",
     "default": 1
   },
