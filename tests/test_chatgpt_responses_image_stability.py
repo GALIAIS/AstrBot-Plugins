@@ -224,6 +224,22 @@ class PluginStabilityTests(unittest.TestCase):
         self.assertIn("⏳ 已进入生图队列", samples[1])
         self.assertIn("📘 ChatGPT Images 指令帮助", samples[-1])
 
+    def test_accepted_card_is_concise_and_plain(self):
+        plugin = self.make_plugin()
+
+        text = plugin._format_accepted_card(
+            action="edit",
+            request_opts={"size": "1024x1024", "output_format": "png"},
+            input_image_count=2,
+        )
+
+        self.assertIn("⏳ 已收到指令，正在执行", text)
+        self.assertIn("模式：图生图", text)
+        self.assertIn("输入图：2 张", text)
+        self.assertNotIn("╭", text)
+        self.assertNotIn("├", text)
+        self.assertNotIn("╰", text)
+
 
 if __name__ == "__main__":
     unittest.main()

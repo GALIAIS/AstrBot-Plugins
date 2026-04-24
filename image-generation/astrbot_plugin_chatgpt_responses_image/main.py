@@ -224,7 +224,15 @@ class ChatGPTResponsesImagePlugin(Star):
             ]
 
         try:
-            results: list[Any] = []
+            results: list[Any] = [
+                event.plain_result(
+                    self._format_accepted_card(
+                        action=action,
+                        request_opts=request_opts,
+                        input_image_count=len(input_images),
+                    )
+                )
+            ]
             if wait_num > 0:
                 results.append(event.plain_result(self._format_queue_card(wait_num)))
 
@@ -1659,6 +1667,26 @@ class ChatGPTResponsesImagePlugin(Star):
                 f"前方还有 {wait_num} 个任务",
                 "插件会按顺序执行，完成后只发送最终成图",
             ],
+            icon="⏳",
+        )
+
+    def _format_accepted_card(
+        self,
+        *,
+        action: str,
+        request_opts: dict[str, Any],
+        input_image_count: int,
+    ) -> str:
+        details = [
+            f"模式：{self._display_action_name(action)}",
+            f"尺寸：{self._display_size(str(request_opts.get('size') or '1024x1024'))}",
+            f"格式：{self._display_output_format(str(request_opts.get('output_format') or 'png'))}",
+        ]
+        if input_image_count:
+            details.append(f"输入图：{input_image_count} 张")
+        return self._format_card(
+            "已收到指令，正在执行",
+            [" · ".join(details)],
             icon="⏳",
         )
 
