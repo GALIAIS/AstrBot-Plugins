@@ -400,8 +400,13 @@ class ChatGPTResponsesImagePlugin(Star):
             elif 200 <= status_code < 300:
                 content_type = str(resp_headers.get("content-type", "")).lower()
                 if "application/json" in content_type:
-                    return await self._parse_json_response(resp_text, output_format_hint)
-                return await self._parse_sse_text(resp_text, output_format_hint)
+                    parsed_ok, parsed_result, parsed_err = await self._parse_json_response(resp_text, output_format_hint)
+                else:
+                    parsed_ok, parsed_result, parsed_err = await self._parse_sse_text(resp_text, output_format_hint)
+                if parsed_ok:
+                    return True, parsed_result, ""
+                last_err = self._brief_error(parsed_err, parsed_err or "解析响应失败")
+                retryable_status = self._looks_like_retryable_stream_error(parsed_err)
             else:
                 self._debug(
                     f"http_non_2xx_responses status={status_code} ctype={str(resp_headers.get('content-type', ''))} endpoint={self._safe_ref(endpoint)}"
@@ -566,6 +571,22 @@ class ChatGPTResponsesImagePlugin(Star):
             )
         )
 
+    def _looks_like_retryable_stream_error(self, text: str) -> bool:
+        lower = (text or "").lower()
+        return any(
+            token in lower
+            for token in (
+                "stream_read_error",
+                "upstream_error",
+                "stream read error",
+                "upstream error",
+                "upstream timeout",
+                "gateway timeout",
+                "temporarily unavailable",
+                "try again",
+            )
+        )
+
     async def _parse_json_response(
         self,
         text: str,
@@ -661,15 +682,17 @@ class ChatGPTResponsesImagePlugin(Star):
     def _extract_error_from_sse(self, payloads: list[dict[str, Any]]) -> str:
         for payload in payloads:
             response_error = payload.get("response", {}).get("error") if isinstance(payload.get("response"), dict) else None
-            if isinstance(response_error, dict) and response_error.get("message"):
-                message = str(response_error.get("message") or "").strip()
+            if isinstance(response_error, dict):
+                message = str(response_error.get("message") or response_error.get("code") or response_error.get("type") or "").strip()
                 error_type = str(response_error.get("type") or "").strip()
-                return f"{message} ({error_type})" if error_type else message
+                if message:
+                    return f"{message} ({error_type})" if error_type and error_type != message else message
             payload_error = payload.get("error")
-            if isinstance(payload_error, dict) and payload_error.get("message"):
-                message = str(payload_error.get("message") or "").strip()
+            if isinstance(payload_error, dict):
+                message = str(payload_error.get("message") or payload_error.get("code") or payload_error.get("type") or "").strip()
                 error_type = str(payload_error.get("type") or "").strip()
-                return f"{message} ({error_type})" if error_type else message
+                if message:
+                    return f"{message} ({error_type})" if error_type and error_type != message else message
         return ""
 
     def _extract_text_from_response_payloads(self, payloads: list[dict[str, Any]]) -> str:
@@ -1811,6 +1834,10 @@ class ChatGPTResponsesImagePlugin(Star):
         json_summary = self._extract_json_error_summary(raw, status_code, headers)
         if json_summary:
             return json_summary
+        if "stream_read_error" in lower and "upstream_error" in lower:
+            return "上游流式读取失败（stream_read_error）。插件已按配置重试；如果仍失败，通常是中转站/源站临时断流或生成任务被上游中断。"
+        if "stream_read_error" in lower or "upstream_error" in lower:
+            return "上游流式响应异常。插件已按配置重试；如果仍失败，请稍后再试或换一个更安全/更短的 prompt。"
         if "image-only model" in lower or "responses-capable text model" in lower:
             return "model 不能填 gpt-image-2；请使用 gpt-5.4 这类 Responses 文本模型，图片模型由 image_generation 工具自动调用。"
         if status_code == 401 or "unauthorized" in lower:
@@ -1937,6 +1964,10 @@ class ChatGPTResponsesImagePlugin(Star):
         headers: httpx.Headers | None = None,
     ) -> str:
         lower = message.lower()
+        if "stream_read_error" in lower and "upstream_error" in lower:
+            return "上游流式读取失败（stream_read_error）。插件已按配置重试；如果仍失败，通常是中转站/源站临时断流或生成任务被上游中断。"
+        if "stream_read_error" in lower or "upstream_error" in lower:
+            return "上游流式响应异常。插件已按配置重试；如果仍失败，请稍后再试或换一个更安全/更短的 prompt。"
         if "image-only model" in lower or "responses-capable text model" in lower:
             return "model 不能填 gpt-image-2；请使用 gpt-5.4 这类 Responses 文本模型，图片模型由 image_generation 工具自动调用。"
         if status_code == 401 or "unauthorized" in lower:

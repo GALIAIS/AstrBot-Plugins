@@ -122,6 +122,24 @@ class PluginStabilityTests(unittest.TestCase):
         self.assertEqual(len(result.images), 1)
         self.assertEqual(result.images[0].data, PNG_1X1)
 
+    def test_sse_upstream_stream_error_is_retryable_and_readable(self):
+        plugin = self.make_plugin()
+        sse = "data: " + json.dumps({
+            "type": "error",
+            "error": {
+                "code": "stream_read_error",
+                "type": "upstream_error",
+            },
+        }) + "\n\n"
+
+        ok, result, err = asyncio.run(plugin._parse_sse_text(sse, "png"))
+
+        self.assertFalse(ok)
+        self.assertIsNone(result)
+        self.assertIn("stream_read_error", err)
+        self.assertTrue(plugin._looks_like_retryable_stream_error(err))
+        self.assertIn("上游流式读取失败", plugin._brief_error(err))
+
     def test_sse_text_response_without_image_reports_model_message(self):
         plugin = self.make_plugin()
         sse = "data: " + json.dumps({
