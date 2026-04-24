@@ -240,6 +240,21 @@ class PluginStabilityTests(unittest.TestCase):
         self.assertNotIn("├", text)
         self.assertNotIn("╰", text)
 
+    def test_immediate_plain_uses_event_send(self):
+        plugin = self.make_plugin()
+
+        class Event:
+            def __init__(self):
+                self.sent = []
+
+            async def send(self, text):
+                self.sent.append(text)
+
+        event = Event()
+        asyncio.run(plugin._send_immediate_plain(event, "accepted"))
+
+        self.assertEqual(event.sent, ["accepted"])
+
 
 if __name__ == "__main__":
     unittest.main()

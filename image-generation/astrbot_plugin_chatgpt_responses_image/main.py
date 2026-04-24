@@ -159,6 +159,12 @@ class ChatGPTResponsesImagePlugin(Star):
         for result in await self._handle_request(event, prompt, opts, action="edit"):
             yield result
 
+    async def _send_immediate_plain(self, event: AstrMessageEvent, text: str) -> None:
+        try:
+            await event.send(text)
+        except Exception as exc:
+            self._debug(f"immediate_send_failed err={exc}")
+
     async def _handle_request(
         self,
         event: AstrMessageEvent,
@@ -224,15 +230,15 @@ class ChatGPTResponsesImagePlugin(Star):
             ]
 
         try:
-            results: list[Any] = [
-                event.plain_result(
-                    self._format_accepted_card(
-                        action=action,
-                        request_opts=request_opts,
-                        input_image_count=len(input_images),
-                    )
-                )
-            ]
+            await self._send_immediate_plain(
+                event,
+                self._format_accepted_card(
+                    action=action,
+                    request_opts=request_opts,
+                    input_image_count=len(input_images),
+                ),
+            )
+            results: list[Any] = []
             if wait_num > 0:
                 results.append(event.plain_result(self._format_queue_card(wait_num)))
 
