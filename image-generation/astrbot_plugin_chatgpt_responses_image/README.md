@@ -56,6 +56,7 @@
 - `max_image_megabytes`：输入图/下载图大小上限，默认 20MB
 - `max_concurrency` / `max_queue_waiting`
 - `timeout`：HTTP / curl 超时秒数
+- `server_error_retries` / `server_error_retry_backoff_seconds`：仅对上游 `server_error` / HTTP 5xx 临时服务端错误自动重试，安全拒绝不重试
 - `send_image_and_text_separately`：图片和完成信息分开发送；遇到平台合并图文预览裁切时可开启
 
 ## 行为说明

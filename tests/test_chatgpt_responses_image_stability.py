@@ -156,6 +156,23 @@ class PluginStabilityTests(unittest.TestCase):
         self.assertNotIn("插件已按配置重试", summary)
         self.assertNotIn("如果仍失败", summary)
 
+
+    def test_server_error_is_retryable_and_readable(self):
+        plugin = self.make_plugin()
+        err = (
+            "An error occurred while processing your request. You can retry your request, "
+            "or contact us through our help center at help.openai.com if the error persists. "
+            "Please include the request ID abc in your message. (server_error)"
+        )
+
+        summary = plugin._brief_error(err)
+        self.assertTrue(plugin._looks_like_retryable_server_error(err))
+        self.assertIn("上游服务端错误", summary)
+        self.assertNotIn("help.openai.com", summary)
+        self.assertNotIn("request ID", summary)
+        self.assertNotIn("插件已按配置重试", summary)
+        self.assertNotIn("如果仍失败", summary)
+
     def test_sse_text_response_without_image_reports_model_message(self):
         plugin = self.make_plugin()
         sse = "data: " + json.dumps({

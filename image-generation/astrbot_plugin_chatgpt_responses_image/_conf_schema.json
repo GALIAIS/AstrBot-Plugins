@@ -90,6 +90,16 @@
     "type": "float",
     "default": 180.0
   },
+  "server_error_retries": {
+    "description": "仅对上游 server_error / HTTP 5xx 临时服务端错误自动重试次数；安全拒绝不重试",
+    "type": "int",
+    "default": 2
+  },
+  "server_error_retry_backoff_seconds": {
+    "description": "server_error 自动重试退避基础秒数",
+    "type": "float",
+    "default": 1.2
+  },
   "send_image_and_text_separately": {
     "description": "图片和完成信息分开发送；部分平台合并图片+文字时预览可能裁切，开启后更稳",
     "type": "bool",

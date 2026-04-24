@@ -380,30 +380,47 @@ class ChatGPTResponsesImagePlugin(Star):
     ) -> tuple[bool, ImageAPIResult | None, str]:
         endpoint = self._build_responses_endpoint(str(self._cfg("base_url", "https://api.openai.com")).strip())
         timeout = float(self._cfg("timeout", 180))
+        retries = max(0, int(self._cfg("server_error_retries", 2)))
+        backoff = max(0.2, float(self._cfg("server_error_retry_backoff_seconds", 1.2)))
         headers = self._build_headers(api_key, session_id=session_id)
+        last_err = "请求失败"
 
-        ok_http, status_code, resp_headers, resp_text, transport_err = await self._request_responses_transport(
-            endpoint=endpoint,
-            headers=headers,
-            payload=payload,
-            timeout=timeout,
-        )
-        if not ok_http:
-            return False, None, self._brief_error(transport_err, "请求失败")
-        if 200 <= status_code < 300:
-            content_type = str(resp_headers.get("content-type", "")).lower()
-            if "application/json" in content_type:
-                parsed_ok, parsed_result, parsed_err = await self._parse_json_response(resp_text, output_format_hint)
+        for attempt in range(retries + 1):
+            ok_http, status_code, resp_headers, resp_text, transport_err = await self._request_responses_transport(
+                endpoint=endpoint,
+                headers=headers,
+                payload=payload,
+                timeout=timeout,
+            )
+            retryable_server_error = False
+
+            if not ok_http:
+                last_err = self._brief_error(transport_err, "请求失败")
+            elif 200 <= status_code < 300:
+                content_type = str(resp_headers.get("content-type", "")).lower()
+                if "application/json" in content_type:
+                    parsed_ok, parsed_result, parsed_err = await self._parse_json_response(resp_text, output_format_hint)
+                else:
+                    parsed_ok, parsed_result, parsed_err = await self._parse_sse_text(resp_text, output_format_hint)
+                if parsed_ok:
+                    return True, parsed_result, ""
+                last_err = self._brief_error(parsed_err, parsed_err or "解析响应失败")
+                retryable_server_error = self._looks_like_retryable_server_error(parsed_err)
             else:
-                parsed_ok, parsed_result, parsed_err = await self._parse_sse_text(resp_text, output_format_hint)
-            if parsed_ok:
-                return True, parsed_result, ""
-            return False, None, self._brief_error(parsed_err, parsed_err or "解析响应失败")
+                self._debug(
+                    f"http_non_2xx_responses status={status_code} ctype={str(resp_headers.get('content-type', ''))} endpoint={self._safe_ref(endpoint)}"
+                )
+                last_err = self._brief_error(resp_text, f"HTTP {status_code}", status_code, httpx.Headers(resp_headers))
+                retryable_server_error = self._status_is_retryable_server_error(status_code)
 
-        self._debug(
-            f"http_non_2xx_responses status={status_code} ctype={str(resp_headers.get('content-type', ''))} endpoint={self._safe_ref(endpoint)}"
-        )
-        return False, None, self._brief_error(resp_text, f"HTTP {status_code}", status_code, httpx.Headers(resp_headers))
+            if retryable_server_error and attempt < retries:
+                delay = backoff * (attempt + 1)
+                self._debug(f"retry_server_error attempt={attempt + 1} delay={delay:.2f}s status={status_code}")
+                await asyncio.sleep(delay)
+                continue
+            return False, None, last_err
+
+        return False, None, last_err
 
     async def _request_responses_transport(
         self,
@@ -552,6 +569,15 @@ class ChatGPTResponsesImagePlugin(Star):
                 "connection refused",
             )
         )
+
+    def _looks_like_retryable_server_error(self, text: str) -> bool:
+        lower = (text or "").lower()
+        if "safety system" in lower or "safety_violations" in lower or "image_generation_user_error" in lower:
+            return False
+        return "server_error" in lower
+
+    def _status_is_retryable_server_error(self, status_code: int | None) -> bool:
+        return status_code in {500, 502, 503}
 
     async def _parse_json_response(
         self,
@@ -1806,6 +1832,8 @@ class ChatGPTResponsesImagePlugin(Star):
             return "上游流式响应异常，请稍后再试或换一个更安全/更短的 prompt。"
         if "safety system" in lower or "safety_violations" in lower or "image_generation_user_error" in lower:
             return "请求被安全系统拒绝。请调整 prompt，减少露骨、暴力、未成年、羞辱或伤害描述。"
+        if "server_error" in lower:
+            return "上游服务端错误，请稍后再试。"
         if "image-only model" in lower or "responses-capable text model" in lower:
             return "model 不能填 gpt-image-2；请使用 gpt-5.4 这类 Responses 文本模型，图片模型由 image_generation 工具自动调用。"
         if status_code == 401 or "unauthorized" in lower:
@@ -1938,6 +1966,8 @@ class ChatGPTResponsesImagePlugin(Star):
             return "上游流式响应异常，请稍后再试或换一个更安全/更短的 prompt。"
         if "safety system" in lower or "safety_violations" in lower or "image_generation_user_error" in lower:
             return "请求被安全系统拒绝。请调整 prompt，减少露骨、暴力、未成年、羞辱或伤害描述。"
+        if error_type == "server_error" or code == "server_error" or "server_error" in lower:
+            return "上游服务端错误，请稍后再试。"
         if "image-only model" in lower or "responses-capable text model" in lower:
             return "model 不能填 gpt-image-2；请使用 gpt-5.4 这类 Responses 文本模型，图片模型由 image_generation 工具自动调用。"
         if status_code == 401 or "unauthorized" in lower:
