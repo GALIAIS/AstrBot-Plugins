@@ -122,6 +122,49 @@ class PluginStabilityTests(unittest.TestCase):
         self.assertEqual(len(result.images), 1)
         self.assertEqual(result.images[0].data, PNG_1X1)
 
+    def test_sse_text_response_without_image_reports_model_message(self):
+        plugin = self.make_plugin()
+        sse = "data: " + json.dumps({
+            "type": "response.completed",
+            "response": {
+                "status": "completed",
+                "output": [{
+                    "type": "message",
+                    "content": [{
+                        "type": "output_text",
+                        "text": "I cannot generate violent content involving named game characters.",
+                    }],
+                }],
+            },
+        }) + "\n\n"
+
+        ok, result, err = asyncio.run(plugin._parse_sse_text(sse, "png"))
+
+        self.assertFalse(ok)
+        self.assertIsNone(result)
+        self.assertIn("未返回图片", err)
+        self.assertIn("violent content", err)
+
+    def test_sse_refusal_response_without_image_reports_refusal(self):
+        plugin = self.make_plugin()
+        sse = "data: " + json.dumps({
+            "type": "response.output_item.done",
+            "item": {
+                "type": "message",
+                "content": [{
+                    "type": "refusal",
+                    "refusal": "I can’t help create that image.",
+                }],
+            },
+        }) + "\n\n"
+
+        ok, result, err = asyncio.run(plugin._parse_sse_text(sse, "png"))
+
+        self.assertFalse(ok)
+        self.assertIsNone(result)
+        self.assertIn("拒绝生成", err)
+        self.assertIn("create that image", err)
+
     def test_input_loader_dedupes_without_dropping_later_unique_images(self):
         plugin = self.make_plugin()
 

@@ -623,6 +623,9 @@ class ChatGPTResponsesImagePlugin(Star):
         sse_error = self._extract_error_from_sse(payloads)
         if sse_error:
             return False, None, sse_error
+        text_fallback = self._extract_text_from_response_payloads(payloads)
+        if text_fallback:
+            return False, None, text_fallback
         return False, None, last_err or "SSE 返回中未收到 image_generation 成图结果。"
 
     def _parse_sse_payloads(self, sse_text: str) -> list[dict[str, Any]]:
@@ -668,6 +671,48 @@ class ChatGPTResponsesImagePlugin(Star):
                 error_type = str(payload_error.get("type") or "").strip()
                 return f"{message} ({error_type})" if error_type else message
         return ""
+
+    def _extract_text_from_response_payloads(self, payloads: list[dict[str, Any]]) -> str:
+        refusals: list[str] = []
+        texts: list[str] = []
+        for payload in payloads:
+            if not isinstance(payload, dict):
+                continue
+            for value in self._iter_response_text_values(payload):
+                kind, text = value
+                if kind == "refusal":
+                    refusals.append(text)
+                elif kind == "text":
+                    texts.append(text)
+        if refusals:
+            return f"上游拒绝生成：{self._truncate_text(' '.join(refusals), 240)}"
+        if texts:
+            return f"上游未返回图片，只返回文本：{self._truncate_text(' '.join(texts), 240)}"
+        return ""
+
+    def _iter_response_text_values(self, obj: Any, depth: int = 0):
+        if depth > 12:
+            return
+        if isinstance(obj, dict):
+            typ = str(obj.get("type") or "").strip()
+            if typ == "refusal":
+                text = str(obj.get("refusal") or obj.get("text") or "").strip()
+                if text:
+                    yield "refusal", text
+            elif typ in {"output_text", "input_text", "text"}:
+                text = str(obj.get("text") or "").strip()
+                if text:
+                    yield "text", text
+            elif typ == "message":
+                content = obj.get("content")
+                if isinstance(content, str) and content.strip():
+                    yield "text", content.strip()
+            for value in obj.values():
+                yield from self._iter_response_text_values(value, depth + 1)
+            return
+        if isinstance(obj, list):
+            for item in obj:
+                yield from self._iter_response_text_values(item, depth + 1)
 
     def _merge_result_from_response(self, result: ImageAPIResult, response_obj: Any) -> None:
         if not isinstance(response_obj, dict):
