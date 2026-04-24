@@ -55,8 +55,7 @@
 - `max_input_images`：单次改图最多输入图数量
 - `max_image_megabytes`：输入图/下载图大小上限，默认 20MB
 - `max_concurrency` / `max_queue_waiting`
-- `timeout` / `request_retries` / `retry_backoff_seconds`
-- `max_retry_after_seconds`：遇到 Retry-After 时单次最多等待秒数
+- `timeout`：HTTP / curl 超时秒数
 - `send_image_and_text_separately`：图片和完成信息分开发送；遇到平台合并图文预览裁切时可开启
 
 ## 行为说明

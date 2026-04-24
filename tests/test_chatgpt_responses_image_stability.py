@@ -122,7 +122,7 @@ class PluginStabilityTests(unittest.TestCase):
         self.assertEqual(len(result.images), 1)
         self.assertEqual(result.images[0].data, PNG_1X1)
 
-    def test_sse_upstream_stream_error_is_retryable_and_readable(self):
+    def test_sse_upstream_stream_error_is_readable_without_retry_copy(self):
         plugin = self.make_plugin()
         sse = "data: " + json.dumps({
             "type": "error",
@@ -137,10 +137,12 @@ class PluginStabilityTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIsNone(result)
         self.assertIn("stream_read_error", err)
-        self.assertTrue(plugin._looks_like_retryable_stream_error(err))
-        self.assertIn("上游流式读取失败", plugin._brief_error(err))
+        summary = plugin._brief_error(err)
+        self.assertIn("上游流式读取失败", summary)
+        self.assertNotIn("插件已按配置重试", summary)
+        self.assertNotIn("如果仍失败", summary)
 
-    def test_safety_user_error_is_retryable_and_readable(self):
+    def test_safety_user_error_is_readable_without_retry_copy(self):
         plugin = self.make_plugin()
         err = (
             "Your request was rejected by the safety system. If you believe this is an error, "
@@ -148,10 +150,11 @@ class PluginStabilityTests(unittest.TestCase):
             "safety_violations=[sexual]. (image_generation_user_error)"
         )
 
-        self.assertTrue(plugin._looks_like_retryable_stream_error(err))
         summary = plugin._brief_error(err)
         self.assertIn("安全系统拒绝", summary)
         self.assertNotIn("help.openai.com", summary)
+        self.assertNotIn("插件已按配置重试", summary)
+        self.assertNotIn("如果仍失败", summary)
 
     def test_sse_text_response_without_image_reports_model_message(self):
         plugin = self.make_plugin()

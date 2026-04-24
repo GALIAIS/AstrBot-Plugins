@@ -90,21 +90,6 @@
     "type": "float",
     "default": 180.0
   },
-  "request_retries": {
-    "description": "请求失败重试次数",
-    "type": "int",
-    "default": 2
-  },
-  "retry_backoff_seconds": {
-    "description": "重试退避基础秒数",
-    "type": "float",
-    "default": 1.2
-  },
-  "max_retry_after_seconds": {
-    "description": "遇到 Retry-After 时单次最多等待秒数，避免长时间阻塞队列",
-    "type": "float",
-    "default": 30.0
-  },
   "send_image_and_text_separately": {
     "description": "图片和完成信息分开发送；部分平台合并图片+文字时预览可能裁切，开启后更稳",
     "type": "bool",

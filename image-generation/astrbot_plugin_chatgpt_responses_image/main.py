@@ -380,48 +380,30 @@ class ChatGPTResponsesImagePlugin(Star):
     ) -> tuple[bool, ImageAPIResult | None, str]:
         endpoint = self._build_responses_endpoint(str(self._cfg("base_url", "https://api.openai.com")).strip())
         timeout = float(self._cfg("timeout", 180))
-        retries = max(0, int(self._cfg("request_retries", 2)))
-        backoff = max(0.2, float(self._cfg("retry_backoff_seconds", 1.2)))
         headers = self._build_headers(api_key, session_id=session_id)
-        last_err = "请求失败"
 
-        for attempt in range(retries + 1):
-            ok_http, status_code, resp_headers, resp_text, transport_err = await self._request_responses_transport(
-                endpoint=endpoint,
-                headers=headers,
-                payload=payload,
-                timeout=timeout,
-            )
-            retryable_status = False
-
-            if not ok_http:
-                last_err = self._brief_error(transport_err, "请求失败")
-                retryable_status = self._looks_like_retryable_transport_error(transport_err)
-            elif 200 <= status_code < 300:
-                content_type = str(resp_headers.get("content-type", "")).lower()
-                if "application/json" in content_type:
-                    parsed_ok, parsed_result, parsed_err = await self._parse_json_response(resp_text, output_format_hint)
-                else:
-                    parsed_ok, parsed_result, parsed_err = await self._parse_sse_text(resp_text, output_format_hint)
-                if parsed_ok:
-                    return True, parsed_result, ""
-                last_err = self._brief_error(parsed_err, parsed_err or "解析响应失败")
-                retryable_status = self._looks_like_retryable_stream_error(parsed_err)
+        ok_http, status_code, resp_headers, resp_text, transport_err = await self._request_responses_transport(
+            endpoint=endpoint,
+            headers=headers,
+            payload=payload,
+            timeout=timeout,
+        )
+        if not ok_http:
+            return False, None, self._brief_error(transport_err, "请求失败")
+        if 200 <= status_code < 300:
+            content_type = str(resp_headers.get("content-type", "")).lower()
+            if "application/json" in content_type:
+                parsed_ok, parsed_result, parsed_err = await self._parse_json_response(resp_text, output_format_hint)
             else:
-                self._debug(
-                    f"http_non_2xx_responses status={status_code} ctype={str(resp_headers.get('content-type', ''))} endpoint={self._safe_ref(endpoint)}"
-                )
-                last_err = self._brief_error(resp_text, f"HTTP {status_code}", status_code, httpx.Headers(resp_headers))
-                retryable_status = self._status_is_retryable(status_code)
+                parsed_ok, parsed_result, parsed_err = await self._parse_sse_text(resp_text, output_format_hint)
+            if parsed_ok:
+                return True, parsed_result, ""
+            return False, None, self._brief_error(parsed_err, parsed_err or "解析响应失败")
 
-            if retryable_status and attempt < retries:
-                delay = self._retry_delay_seconds(resp_headers, resp_text, backoff * (attempt + 1))
-                self._debug(f"retry_responses attempt={attempt + 1} delay={delay:.2f}s status={status_code}")
-                await asyncio.sleep(delay)
-                continue
-            return False, None, last_err
-
-        return False, None, last_err
+        self._debug(
+            f"http_non_2xx_responses status={status_code} ctype={str(resp_headers.get('content-type', ''))} endpoint={self._safe_ref(endpoint)}"
+        )
+        return False, None, self._brief_error(resp_text, f"HTTP {status_code}", status_code, httpx.Headers(resp_headers))
 
     async def _request_responses_transport(
         self,
@@ -568,25 +550,6 @@ class ChatGPTResponsesImagePlugin(Star):
                 "responseended",
                 "empty reply from server",
                 "connection refused",
-            )
-        )
-
-    def _looks_like_retryable_stream_error(self, text: str) -> bool:
-        lower = (text or "").lower()
-        return any(
-            token in lower
-            for token in (
-                "stream_read_error",
-                "upstream_error",
-                "stream read error",
-                "upstream error",
-                "upstream timeout",
-                "gateway timeout",
-                "temporarily unavailable",
-                "try again",
-                "safety system",
-                "safety_violations",
-                "image_generation_user_error",
             )
         )
 
@@ -1838,11 +1801,11 @@ class ChatGPTResponsesImagePlugin(Star):
         if json_summary:
             return json_summary
         if "stream_read_error" in lower and "upstream_error" in lower:
-            return "上游流式读取失败（stream_read_error）。插件已按配置重试；如果仍失败，通常是中转站/源站临时断流或生成任务被上游中断。"
+            return "上游流式读取失败（stream_read_error）。通常是中转站/源站临时断流或生成任务被上游中断。"
         if "stream_read_error" in lower or "upstream_error" in lower:
-            return "上游流式响应异常。插件已按配置重试；如果仍失败，请稍后再试或换一个更安全/更短的 prompt。"
+            return "上游流式响应异常，请稍后再试或换一个更安全/更短的 prompt。"
         if "safety system" in lower or "safety_violations" in lower or "image_generation_user_error" in lower:
-            return "请求被安全系统拒绝。插件已按配置重试；如果仍失败，请调整 prompt，减少露骨、暴力、未成年、羞辱或伤害描述。"
+            return "请求被安全系统拒绝。请调整 prompt，减少露骨、暴力、未成年、羞辱或伤害描述。"
         if "image-only model" in lower or "responses-capable text model" in lower:
             return "model 不能填 gpt-image-2；请使用 gpt-5.4 这类 Responses 文本模型，图片模型由 image_generation 工具自动调用。"
         if status_code == 401 or "unauthorized" in lower:
@@ -1939,7 +1902,7 @@ class ChatGPTResponsesImagePlugin(Star):
             if detail:
                 parts.append(self._truncate_text(detail, 120))
             if retry_after:
-                parts.append(f"建议等待 {retry_after:g}s 后重试")
+                parts.append(f"建议等待 {retry_after:g}s 后再试")
             if zone:
                 parts.append(f"zone={zone}")
             if ray_id:
@@ -1970,11 +1933,11 @@ class ChatGPTResponsesImagePlugin(Star):
     ) -> str:
         lower = message.lower()
         if "stream_read_error" in lower and "upstream_error" in lower:
-            return "上游流式读取失败（stream_read_error）。插件已按配置重试；如果仍失败，通常是中转站/源站临时断流或生成任务被上游中断。"
+            return "上游流式读取失败（stream_read_error）。通常是中转站/源站临时断流或生成任务被上游中断。"
         if "stream_read_error" in lower or "upstream_error" in lower:
-            return "上游流式响应异常。插件已按配置重试；如果仍失败，请稍后再试或换一个更安全/更短的 prompt。"
+            return "上游流式响应异常，请稍后再试或换一个更安全/更短的 prompt。"
         if "safety system" in lower or "safety_violations" in lower or "image_generation_user_error" in lower:
-            return "请求被安全系统拒绝。插件已按配置重试；如果仍失败，请调整 prompt，减少露骨、暴力、未成年、羞辱或伤害描述。"
+            return "请求被安全系统拒绝。请调整 prompt，减少露骨、暴力、未成年、羞辱或伤害描述。"
         if "image-only model" in lower or "responses-capable text model" in lower:
             return "model 不能填 gpt-image-2；请使用 gpt-5.4 这类 Responses 文本模型，图片模型由 image_generation 工具自动调用。"
         if status_code == 401 or "unauthorized" in lower:
@@ -1987,7 +1950,7 @@ class ChatGPTResponsesImagePlugin(Star):
             return "请求体或图片过大，请压缩输入图片或减少多图数量后再试。"
         if status_code == 429:
             retry_after = self._extract_retry_after_value(headers=headers)
-            suffix = f" 建议等待 {retry_after:g}s 后重试。" if retry_after else ""
+            suffix = f" 建议等待 {retry_after:g}s 后再试。" if retry_after else ""
             return f"请求过于频繁或额度受限。{suffix}".strip()
 
         meta: list[str] = []
@@ -2001,12 +1964,6 @@ class ChatGPTResponsesImagePlugin(Star):
             meta.append(f"param={param}")
         message_text = self._truncate_text(message, 240)
         return f"{message_text}{('（' + ' · '.join(meta) + '）') if meta else ''}"
-
-    def _retry_delay_seconds(self, headers: dict[str, str], body_text: str, fallback: float) -> float:
-        retry_after = self._extract_retry_after_value(headers=headers, body_text=body_text)
-        delay = retry_after if retry_after and retry_after > 0 else fallback
-        cap = max(1.0, float(self._cfg("max_retry_after_seconds", 30.0)))
-        return min(max(0.2, float(delay)), cap)
 
     def _extract_retry_after_value(
         self,
@@ -2088,11 +2045,6 @@ class ChatGPTResponsesImagePlugin(Star):
         prefix = f"服务端返回 HTML 错页（{detail}）" if detail else "服务端返回 HTML 错页"
         return f"{prefix}，这不是图片接口的 JSON/SSE。请检查 `base_url` 是否直连 API，或当前 AstrBot 服务器 IP 是否被 CDN/WAF 拦截。"
 
-    def _status_is_retryable(self, status_code: int | None) -> bool:
-        if status_code is None:
-            return False
-        return status_code in {408, 429, 500, 502, 503, 504}
-
     def _to_bool(self, value: Any, default: bool) -> bool:
         if isinstance(value, bool):
             return value
@@ -2156,7 +2108,7 @@ class ChatGPTResponsesImagePlugin(Star):
                 f"已移除参数：{self._removed_options_text()}",
                 "图生图支持：直接附图、回复图片、重复 --image、多图 image=a.png,b.png",
                 f"size 支持 auto 或任意 <宽>x<高>，例如 {self._HELP_SIZE_EXAMPLES}",
-                "固定走 Responses + image_generation + SSE；只发送最终成图，必要时按配置回退最后一张 partial_image",
+                "固定走 Responses + image_generation + SSE；只发送最终成图",
             ],
             icon="📘",
         )
