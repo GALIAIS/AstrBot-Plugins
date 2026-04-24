@@ -140,6 +140,19 @@ class PluginStabilityTests(unittest.TestCase):
         self.assertTrue(plugin._looks_like_retryable_stream_error(err))
         self.assertIn("上游流式读取失败", plugin._brief_error(err))
 
+    def test_safety_user_error_is_retryable_and_readable(self):
+        plugin = self.make_plugin()
+        err = (
+            "Your request was rejected by the safety system. If you believe this is an error, "
+            "contact us at help.openai.com and include the request ID abc. "
+            "safety_violations=[sexual]. (image_generation_user_error)"
+        )
+
+        self.assertTrue(plugin._looks_like_retryable_stream_error(err))
+        summary = plugin._brief_error(err)
+        self.assertIn("安全系统拒绝", summary)
+        self.assertNotIn("help.openai.com", summary)
+
     def test_sse_text_response_without_image_reports_model_message(self):
         plugin = self.make_plugin()
         sse = "data: " + json.dumps({
@@ -160,7 +173,7 @@ class PluginStabilityTests(unittest.TestCase):
 
         self.assertFalse(ok)
         self.assertIsNone(result)
-        self.assertIn("未返回图片", err)
+        self.assertNotIn("上游未返回图片，只返回文本", err)
         self.assertIn("violent content", err)
 
     def test_sse_refusal_response_without_image_reports_refusal(self):

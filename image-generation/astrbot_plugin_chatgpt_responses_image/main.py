@@ -584,6 +584,9 @@ class ChatGPTResponsesImagePlugin(Star):
                 "gateway timeout",
                 "temporarily unavailable",
                 "try again",
+                "safety system",
+                "safety_violations",
+                "image_generation_user_error",
             )
         )
 
@@ -710,7 +713,7 @@ class ChatGPTResponsesImagePlugin(Star):
         if refusals:
             return f"上游拒绝生成：{self._truncate_text(' '.join(refusals), 240)}"
         if texts:
-            return f"上游未返回图片，只返回文本：{self._truncate_text(' '.join(texts), 240)}"
+            return self._truncate_text(' '.join(texts), 240)
         return ""
 
     def _iter_response_text_values(self, obj: Any, depth: int = 0):
@@ -1838,6 +1841,8 @@ class ChatGPTResponsesImagePlugin(Star):
             return "上游流式读取失败（stream_read_error）。插件已按配置重试；如果仍失败，通常是中转站/源站临时断流或生成任务被上游中断。"
         if "stream_read_error" in lower or "upstream_error" in lower:
             return "上游流式响应异常。插件已按配置重试；如果仍失败，请稍后再试或换一个更安全/更短的 prompt。"
+        if "safety system" in lower or "safety_violations" in lower or "image_generation_user_error" in lower:
+            return "请求被安全系统拒绝。插件已按配置重试；如果仍失败，请调整 prompt，减少露骨、暴力、未成年、羞辱或伤害描述。"
         if "image-only model" in lower or "responses-capable text model" in lower:
             return "model 不能填 gpt-image-2；请使用 gpt-5.4 这类 Responses 文本模型，图片模型由 image_generation 工具自动调用。"
         if status_code == 401 or "unauthorized" in lower:
@@ -1968,6 +1973,8 @@ class ChatGPTResponsesImagePlugin(Star):
             return "上游流式读取失败（stream_read_error）。插件已按配置重试；如果仍失败，通常是中转站/源站临时断流或生成任务被上游中断。"
         if "stream_read_error" in lower or "upstream_error" in lower:
             return "上游流式响应异常。插件已按配置重试；如果仍失败，请稍后再试或换一个更安全/更短的 prompt。"
+        if "safety system" in lower or "safety_violations" in lower or "image_generation_user_error" in lower:
+            return "请求被安全系统拒绝。插件已按配置重试；如果仍失败，请调整 prompt，减少露骨、暴力、未成年、羞辱或伤害描述。"
         if "image-only model" in lower or "responses-capable text model" in lower:
             return "model 不能填 gpt-image-2；请使用 gpt-5.4 这类 Responses 文本模型，图片模型由 image_generation 工具自动调用。"
         if status_code == 401 or "unauthorized" in lower:
