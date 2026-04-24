@@ -240,20 +240,31 @@ class PluginStabilityTests(unittest.TestCase):
         self.assertNotIn("├", text)
         self.assertNotIn("╰", text)
 
-    def test_immediate_plain_uses_event_send(self):
-        plugin = self.make_plugin()
+    def test_handle_request_yields_accepted_before_api_call(self):
+        plugin = self.make_plugin({"api_key": "test", "max_concurrency": 1})
+        order = []
 
         class Event:
-            def __init__(self):
-                self.sent = []
+            def plain_result(self, text):
+                return ("plain", text)
 
-            async def send(self, text):
-                self.sent.append(text)
+        async def fake_request(**kwargs):
+            order.append("api_called")
+            result = self.module.ImageAPIResult(
+                images=[self.module.OutputImage(data=PNG_1X1, mime_type="image/png")],
+                size="1024x1024",
+                output_format="png",
+            )
+            return True, result, ""
 
-        event = Event()
-        asyncio.run(plugin._send_immediate_plain(event, "accepted"))
+        plugin._request_responses_api = fake_request
+        gen = plugin._handle_request(Event(), "cat", {}, "generate")
+        first = asyncio.run(gen.__anext__())
 
-        self.assertEqual(event.sent, ["accepted"])
+        self.assertEqual(order, [])
+        self.assertEqual(first[0], "plain")
+        self.assertIn("⏳ 已收到指令，正在执行", first[1])
+        asyncio.run(gen.aclose())
 
 
 if __name__ == "__main__":

@@ -143,7 +143,7 @@ class ChatGPTResponsesImagePlugin(Star):
         if not prompt:
             yield event.plain_result(self._format_usage_card("generate"))
             return
-        for result in await self._handle_request(event, prompt, opts, action="generate"):
+        async for result in self._handle_request(event, prompt, opts, action="generate"):
             yield result
 
     @filter.command("gpt改图", alias={"gpti2i", "chatgpt改图"})
@@ -156,14 +156,8 @@ class ChatGPTResponsesImagePlugin(Star):
         if not prompt:
             yield event.plain_result(self._format_usage_card("edit"))
             return
-        for result in await self._handle_request(event, prompt, opts, action="edit"):
+        async for result in self._handle_request(event, prompt, opts, action="edit"):
             yield result
-
-    async def _send_immediate_plain(self, event: AstrMessageEvent, text: str) -> None:
-        try:
-            await event.send(text)
-        except Exception as exc:
-            self._debug(f"immediate_send_failed err={exc}")
 
     async def _handle_request(
         self,
@@ -171,14 +165,18 @@ class ChatGPTResponsesImagePlugin(Star):
         prompt: str,
         opts: dict[str, Any],
         action: str,
-    ) -> list[Any]:
+    ):
         api_key = str(self._cfg("api_key", "")).strip()
         if not api_key:
-            return [event.plain_result(self._format_error_card("未配置 API Key", "请先在插件配置中填写 api_key。"))]
+
+            yield event.plain_result(self._format_error_card("未配置 API Key", "请先在插件配置中填写 api_key。"))
+            return
 
         request_opts, err = self._resolve_request_options(opts)
         if err:
-            return [event.plain_result(self._format_error_card("参数错误", err))]
+
+            yield event.plain_result(self._format_error_card("参数错误", err))
+            return
 
         input_images: list[InputImage] = []
         mask_image: InputImage | None = None
@@ -194,53 +192,50 @@ class ChatGPTResponsesImagePlugin(Star):
             candidate_limit = max(max_input_images * 8, max_input_images)
             image_sources = list(dict.fromkeys([x for x in image_sources if x]))[:candidate_limit]
             if not image_sources:
-                return [
-                    event.plain_result(
-                        self._format_error_card(
-                            "未检测到输入图片",
-                            "请直接附图、回复图片，或使用 --image 指定输入图。",
-                        )
+                yield event.plain_result(
+                    self._format_error_card(
+                        "未检测到输入图片",
+                        "请直接附图、回复图片，或使用 --image 指定输入图。",
                     )
-                ]
+                )
+                return
 
             input_images, load_err = await self._load_input_images_for_event(event, image_sources, max_input_images)
             if load_err:
-                return [event.plain_result(self._format_error_card("读取输入图片失败", load_err))]
+
+                yield event.plain_result(self._format_error_card("读取输入图片失败", load_err))
+                return
 
             mask_ref = str(opts.get("mask") or "").strip()
             if mask_ref:
-                return [
-                    event.plain_result(
-                        self._format_error_card(
-                            "暂不支持蒙版",
-                            "当前 Responses 实现还未接入 mask/inpainting，请先去掉 --mask。",
-                        )
+                yield event.plain_result(
+                    self._format_error_card(
+                        "暂不支持蒙版",
+                        "当前 Responses 实现还未接入 mask/inpainting，请先去掉 --mask。",
                     )
-                ]
+                )
+                return
 
         ok_slot, wait_num = await self._acquire_queue_ticket()
         if not ok_slot:
-            return [
-                event.plain_result(
-                    self._format_error_card(
-                        "队列已满",
-                        f"当前最多允许等待 {self._max_queue_waiting} 个任务，请稍后再试。",
-                    )
+            yield event.plain_result(
+                self._format_error_card(
+                    "队列已满",
+                    f"当前最多允许等待 {self._max_queue_waiting} 个任务，请稍后再试。",
                 )
-            ]
+            )
+            return
 
         try:
-            await self._send_immediate_plain(
-                event,
+            yield event.plain_result(
                 self._format_accepted_card(
                     action=action,
                     request_opts=request_opts,
                     input_image_count=len(input_images),
-                ),
+                )
             )
-            results: list[Any] = []
             if wait_num > 0:
-                results.append(event.plain_result(self._format_queue_card(wait_num)))
+                yield event.plain_result(self._format_queue_card(wait_num))
 
             t0 = time.perf_counter()
             payload = self._build_responses_payload(
@@ -257,7 +252,8 @@ class ChatGPTResponsesImagePlugin(Star):
             )
 
             if not ok or api_result is None:
-                return results + [event.plain_result(self._format_error_card("生图失败", req_err))]
+                yield event.plain_result(self._format_error_card("生图失败", req_err))
+                return
 
             saved_paths: list[str] = []
             requested_format = str(request_opts.get("output_format") or "png")
@@ -266,7 +262,8 @@ class ChatGPTResponsesImagePlugin(Star):
                 if out:
                     saved_paths.append(out)
             if not saved_paths:
-                return results + [event.plain_result(self._format_error_card("保存失败", "本地保存图片失败。"))]
+                yield event.plain_result(self._format_error_card("保存失败", "本地保存图片失败。"))
+                return
 
             info = self._format_success_info(
                 action=action,
@@ -281,13 +278,13 @@ class ChatGPTResponsesImagePlugin(Star):
 
             if self._to_bool(self._cfg("send_image_and_text_separately", False), False):
                 for path in saved_paths:
-                    results.append(event.chain_result([Comp.Image(file=path)]))
-                results.append(event.plain_result(info))
+                    yield event.chain_result([Comp.Image(file=path)])
+                yield event.plain_result(info)
             else:
                 chain: list[Any] = [Comp.Image(file=path) for path in saved_paths]
                 chain.append(Comp.Plain(info))
-                results.append(event.chain_result(chain))
-            return results
+                yield event.chain_result(chain)
+            return
         finally:
             await self._release_queue_ticket()
 
