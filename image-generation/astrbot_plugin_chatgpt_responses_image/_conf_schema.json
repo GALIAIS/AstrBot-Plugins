@@ -38,10 +38,10 @@
   "default_instructions": {
     "description": "Responses 默认 instructions",
     "type": "string",
-    "default": "you are a helpful assistant"
+    "default": ""
   },
   "session_id": {
-    "description": "默认 session_id（为空时会自动生成）",
+    "description": "session_id 前缀；未在命令里显式传入时，每次请求都会基于此前缀自动生成唯一 session_id",
     "type": "string",
     "default": "chatgpt-responses-image"
   },

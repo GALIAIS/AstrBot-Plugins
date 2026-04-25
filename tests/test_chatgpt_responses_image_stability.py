@@ -195,6 +195,26 @@ class PluginStabilityTests(unittest.TestCase):
         self.assertIn("return an edited image", payload["instructions"])
         self.assertNotIn("helpful assistant", payload["instructions"].lower())
 
+    def test_default_session_id_is_unique_per_request_even_with_same_config_prefix(self):
+        plugin = self.make_plugin({"session_id": "chatgpt-responses-image"})
+
+        opts1, err1 = plugin._resolve_request_options({})
+        opts2, err2 = plugin._resolve_request_options({})
+
+        self.assertFalse(err1)
+        self.assertFalse(err2)
+        self.assertNotEqual(opts1["session_id"], opts2["session_id"])
+        self.assertTrue(opts1["session_id"].startswith("chatgpt-responses-image-"))
+        self.assertTrue(opts2["session_id"].startswith("chatgpt-responses-image-"))
+
+    def test_explicit_session_id_is_preserved_exactly(self):
+        plugin = self.make_plugin({"session_id": "config-prefix"})
+
+        opts, err = plugin._resolve_request_options({"session_id": "manual-session"})
+
+        self.assertFalse(err)
+        self.assertEqual(opts["session_id"], "manual-session")
+
     def test_sse_upstream_stream_error_is_readable_without_retry_copy(self):
         plugin = self.make_plugin()
         sse = "data: " + json.dumps({
@@ -486,6 +506,49 @@ class PluginStabilityTests(unittest.TestCase):
 
         self.assertEqual(started_count, 2)
         self.assertEqual(running, 2)
+
+    def test_concurrent_requests_use_distinct_session_ids(self):
+        plugin = self.make_plugin({"api_key": "test", "max_concurrency": 3, "session_id": "shared-prefix"})
+        seen_session_ids = []
+        release = asyncio.Event()
+
+        class Event:
+            async def send(self, result):
+                pass
+            def plain_result(self, text):
+                return ("plain", text)
+            def chain_result(self, chain):
+                return ("chain", chain)
+
+        async def fake_request(**kwargs):
+            seen_session_ids.append(kwargs["session_id"])
+            await release.wait()
+            result = self.module.ImageAPIResult(
+                images=[self.module.OutputImage(data=PNG_1X1, mime_type="image/png")],
+                size="1024x1024",
+                output_format="png",
+            )
+            return True, result, ""
+
+        async def drain(gen):
+            return [item async for item in gen]
+
+        async def scenario():
+            plugin._request_responses_api = fake_request
+            await asyncio.gather(
+                drain(plugin._handle_request(Event(), "cat 1", {}, "generate")),
+                drain(plugin._handle_request(Event(), "cat 2", {}, "generate")),
+                drain(plugin._handle_request(Event(), "cat 3", {}, "generate")),
+            )
+            await asyncio.sleep(0.05)
+            release.set()
+            await asyncio.gather(*list(plugin._background_tasks))
+
+        asyncio.run(scenario())
+
+        self.assertEqual(len(seen_session_ids), 3)
+        self.assertEqual(len(set(seen_session_ids)), 3)
+        self.assertTrue(all(x.startswith("shared-prefix-") for x in seen_session_ids))
 
 
 if __name__ == "__main__":

@@ -57,8 +57,8 @@
 - `default_model`：默认 `gpt-5.4`
 - `default_size`：默认尺寸，支持 `auto` 或任意 `<宽>x<高>`
 - `default_output_format`：默认输出文件格式
-- `default_instructions`：默认 instructions
-- `session_id`：默认 session id
+- `default_instructions`：默认 instructions；留空时插件会按文生图/改图自动补强制出图指令
+- `session_id`：session id 前缀；未显式传 `session_id=...` 时，每次请求都会自动生成唯一值，避免并发串流
 - `user_agent` / `version` / `originator`：Codex 风格请求头
 - `allow_partial_fallback`：未拿到最终图时是否回退最后一张 partial
 - `max_input_images`：单次改图最多输入图数量

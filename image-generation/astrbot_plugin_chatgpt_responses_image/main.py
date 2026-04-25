@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -526,10 +527,12 @@ class ChatGPTResponsesImagePlugin(Star):
         if output_format not in self._FORMATS:
             return {}, "output_format 仅支持 png/jpeg/webp。"
 
-        session_id = str(opts.get("session_id") or "").strip()
-        if not session_id:
+        explicit_session_id = str(opts.get("session_id") or "").strip()
+        if explicit_session_id:
+            session_id = explicit_session_id
+        else:
             configured_session = str(self._cfg("session_id", "chatgpt-responses-image")).strip()
-            session_id = configured_session or f"chatgpt-responses-image-{int(time.time() * 1000)}"
+            session_id = self._build_auto_session_id(configured_session or "chatgpt-responses-image")
 
         instructions = str(
             opts.get("instructions") or self._cfg("default_instructions", "")
@@ -545,6 +548,12 @@ class ChatGPTResponsesImagePlugin(Star):
             "session_id": session_id,
         }
         return resolved, ""
+
+    def _build_auto_session_id(self, prefix: str) -> str:
+        safe_prefix = re.sub(r"[^a-zA-Z0-9._-]+", "-", str(prefix or "").strip()).strip("-._")
+        if not safe_prefix:
+            safe_prefix = "chatgpt-responses-image"
+        return f"{safe_prefix}-{int(time.time() * 1000)}-{uuid.uuid4().hex[:8]}"
 
     def _build_input_content(self, prompt: str, input_images: list[InputImage]) -> list[dict[str, str]]:
         content: list[dict[str, str]] = [{"type": "input_text", "text": prompt}]
