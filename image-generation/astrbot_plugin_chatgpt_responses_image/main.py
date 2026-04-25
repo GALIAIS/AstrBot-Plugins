@@ -482,14 +482,16 @@ class ChatGPTResponsesImagePlugin(Star):
             for path in saved_paths:
                 self._debug_saved_image(path)
 
-            if self._to_bool(self._cfg("send_image_and_text_separately", False), False):
-                for path in saved_paths:
-                    await self._send_message_result(event, event.chain_result([Comp.Image(file=path)]))
-                await self._send_message_result(event, event.plain_result(info))
-            else:
-                chain: list[Any] = [Comp.Image(file=path) for path in saved_paths]
-                chain.append(Comp.Plain(info))
-                await self._send_message_result(event, event.chain_result(chain))
+            delivery_err = await self._deliver_generation_result(event, saved_paths, info)
+            if delivery_err:
+                logger.error(f"chatgpt image delivery failed: {delivery_err}")
+                try:
+                    await self._send_message_result(
+                        event,
+                        event.plain_result(self._format_error_card("发送失败", delivery_err)),
+                    )
+                except Exception:
+                    pass
         except Exception as exc:
             logger.error(f"chatgpt image background task failed: {exc}")
             try:
@@ -508,6 +510,50 @@ class ChatGPTResponsesImagePlugin(Star):
             await self.context.send_message(origin, result)
             return
         raise RuntimeError("当前 AstrBot 事件不支持后台发送消息")
+
+    async def _deliver_generation_result(self, event: AstrMessageEvent, saved_paths: list[str], info: str) -> str:
+        prefer_separate = self._to_bool(self._cfg("send_image_and_text_separately", False), False)
+        strategies = [self._send_generation_result_separately]
+        if not prefer_separate:
+            strategies.insert(0, self._send_generation_result_combined)
+
+        errors: list[str] = []
+        for idx, strategy in enumerate(strategies):
+            try:
+                await strategy(event, saved_paths, info)
+                if idx > 0:
+                    self._debug(f"delivery_fallback_ok strategy={strategy.__name__}")
+                return ""
+            except Exception as exc:
+                errors.append(f"{strategy.__name__}: {exc}")
+                self._debug(f"delivery_fallback_fail strategy={strategy.__name__} err={exc}")
+
+        if self._looks_like_platform_send_failure(" ".join(errors)):
+            return (
+                "平台发送消息失败。图片已经生成，但当前消息链被客户端拒绝；"
+                "插件已自动尝试拆分图文发送，仍未成功。请稍后重试，或检查 QQ/OneBot 侧图片发送能力。"
+            )
+        return f"生成已完成，但回传消息失败：{self._truncate_text(' | '.join(errors), 220)}"
+
+    async def _send_generation_result_combined(
+        self,
+        event: AstrMessageEvent,
+        saved_paths: list[str],
+        info: str,
+    ) -> None:
+        chain: list[Any] = [Comp.Image(file=path) for path in saved_paths]
+        chain.append(Comp.Plain(info))
+        await self._send_message_result(event, event.chain_result(chain))
+
+    async def _send_generation_result_separately(
+        self,
+        event: AstrMessageEvent,
+        saved_paths: list[str],
+        info: str,
+    ) -> None:
+        for path in saved_paths:
+            await self._send_message_result(event, event.chain_result([Comp.Image(file=path)]))
+        await self._send_message_result(event, event.plain_result(info))
 
     def _resolve_request_options(self, opts: dict[str, Any]) -> tuple[dict[str, Any], str]:
         model = str(opts.get("model") or self._cfg("default_model", "gpt-5.4")).strip() or "gpt-5.4"
@@ -2116,6 +2162,20 @@ class ChatGPTResponsesImagePlugin(Star):
         if raw:
             return raw[:320]
         return default
+
+    def _looks_like_platform_send_failure(self, text: str) -> bool:
+        lower = str(text or "").lower()
+        hints = (
+            "actionfailed",
+            "retcode=1200",
+            "eventchecker failed",
+            "sendmsg",
+            "nodikernelmsgservice/sendmsg",
+            "result': 10",
+            '"result": 10',
+            "stream='normal-action'",
+        )
+        return any(hint in lower for hint in hints)
 
     def _extract_json_error_summary(
         self,

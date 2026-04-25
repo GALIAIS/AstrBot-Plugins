@@ -550,6 +550,40 @@ class PluginStabilityTests(unittest.TestCase):
         self.assertEqual(len(set(seen_session_ids)), 3)
         self.assertTrue(all(x.startswith("shared-prefix-") for x in seen_session_ids))
 
+    def test_delivery_falls_back_to_separate_messages_when_combined_send_fails(self):
+        plugin = self.make_plugin({"send_image_and_text_separately": False})
+        sent = []
+
+        class Event:
+            async def send(self, result):
+                if result[0] == "chain" and len(result[1]) > 1:
+                    raise RuntimeError("ActionFailed retcode=1200 EventChecker Failed result=10")
+                sent.append(result)
+            def plain_result(self, text):
+                return ("plain", text)
+            def chain_result(self, chain):
+                return ("chain", chain)
+
+        async def scenario():
+            err = await plugin._deliver_generation_result(Event(), ["a.png"], "done")
+            return err
+
+        err = asyncio.run(scenario())
+
+        self.assertEqual(err, "")
+        self.assertEqual(sent[0][0], "chain")
+        self.assertEqual(len(sent[0][1]), 1)
+        self.assertEqual(sent[1], ("plain", "done"))
+
+    def test_platform_send_failure_is_summarized_cleanly(self):
+        plugin = self.make_plugin()
+
+        summary = plugin._looks_like_platform_send_failure(
+            "<ActionFailed status='failed', retcode=1200, message='EventChecker Failed' wording='...' >"
+        )
+
+        self.assertTrue(summary)
+
 
 if __name__ == "__main__":
     unittest.main()
