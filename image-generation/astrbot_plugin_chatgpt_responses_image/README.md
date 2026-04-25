@@ -69,6 +69,7 @@
 - `server_error_retries` / `server_error_retry_backoff_seconds`：仅对上游 `server_error` / HTTP 5xx 临时服务端错误自动重试，安全拒绝不重试
 - `send_image_and_text_separately`：图片和完成信息分开发送；遇到平台合并图文预览裁切时可开启
 - `mention_requester_on_success`：成功回传时是否 @ 发起本次生图/改图的用户
+- `mention_requester_on_error`：错误回传时是否 @ 发起本次生图/改图的用户
 
 ## 行为说明
 

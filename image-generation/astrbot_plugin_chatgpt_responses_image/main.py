@@ -285,7 +285,7 @@ class ChatGPTResponsesImagePlugin(Star):
             return
         prompt, opts, err = self._parse_args(rest)
         if err:
-            yield event.plain_result(self._format_error_card("参数解析失败", err))
+            yield self._build_error_result(event, "参数解析失败", err)
             return
         if not prompt:
             yield event.plain_result(self._format_usage_card(action))
@@ -351,14 +351,12 @@ class ChatGPTResponsesImagePlugin(Star):
     ):
         api_key = str(self._cfg("api_key", "")).strip()
         if not api_key:
-
-            yield event.plain_result(self._format_error_card("未配置 API Key", "请先在插件配置中填写 api_key。"))
+            yield self._build_error_result(event, "未配置 API Key", "请先在插件配置中填写 api_key。")
             return
 
         request_opts, err = self._resolve_request_options(opts)
         if err:
-
-            yield event.plain_result(self._format_error_card("参数错误", err))
+            yield self._build_error_result(event, "参数错误", err)
             return
 
         input_images: list[InputImage] = []
@@ -374,37 +372,33 @@ class ChatGPTResponsesImagePlugin(Star):
             candidate_limit = max(max_input_images * 8, max_input_images)
             image_sources = list(dict.fromkeys([x for x in image_sources if x]))[:candidate_limit]
             if not image_sources:
-                yield event.plain_result(
-                    self._format_error_card(
-                        "未检测到输入图片",
-                        "请直接附图、回复图片，或使用 --image 指定输入图。",
-                    )
+                yield self._build_error_result(
+                    event,
+                    "未检测到输入图片",
+                    "请直接附图、回复图片，或使用 --image 指定输入图。",
                 )
                 return
 
             input_images, load_err = await self._load_input_images_for_event(event, image_sources, max_input_images)
             if load_err:
-
-                yield event.plain_result(self._format_error_card("读取输入图片失败", load_err))
+                yield self._build_error_result(event, "读取输入图片失败", load_err)
                 return
 
             mask_ref = str(opts.get("mask") or "").strip()
             if mask_ref:
-                yield event.plain_result(
-                    self._format_error_card(
-                        "暂不支持蒙版",
-                        "当前 Responses 实现还未接入 mask/inpainting，请先去掉 --mask。",
-                    )
+                yield self._build_error_result(
+                    event,
+                    "暂不支持蒙版",
+                    "当前 Responses 实现还未接入 mask/inpainting，请先去掉 --mask。",
                 )
                 return
 
         ok_slot, wait_num = await self._reserve_queue_slot()
         if not ok_slot:
-            yield event.plain_result(
-                self._format_error_card(
-                    "队列已满",
-                    f"当前最多允许等待 {self._max_queue_waiting} 个任务，请稍后再试。",
-                )
+            yield self._build_error_result(
+                event,
+                "队列已满",
+                f"当前最多允许等待 {self._max_queue_waiting} 个任务，请稍后再试。",
             )
             return
 
@@ -458,7 +452,7 @@ class ChatGPTResponsesImagePlugin(Star):
                 session_id=str(request_opts.get("session_id") or ""),
             )
             if not ok or api_result is None:
-                await self._send_message_result(event, event.plain_result(self._format_error_card("生图失败", req_err)))
+                await self._send_message_result(event, self._build_error_result(event, "生图失败", req_err))
                 return
 
             saved_paths: list[str] = []
@@ -468,7 +462,7 @@ class ChatGPTResponsesImagePlugin(Star):
                 if out:
                     saved_paths.append(out)
             if not saved_paths:
-                await self._send_message_result(event, event.plain_result(self._format_error_card("保存失败", "本地保存图片失败。")))
+                await self._send_message_result(event, self._build_error_result(event, "保存失败", "本地保存图片失败。"))
                 return
 
             info = self._format_success_info(
@@ -488,14 +482,14 @@ class ChatGPTResponsesImagePlugin(Star):
                 try:
                     await self._send_message_result(
                         event,
-                        event.plain_result(self._format_error_card("发送失败", delivery_err)),
+                        self._build_error_result(event, "发送失败", delivery_err),
                     )
                 except Exception:
                     pass
         except Exception as exc:
             logger.error(f"chatgpt image background task failed: {exc}")
             try:
-                await self._send_message_result(event, event.plain_result(self._format_error_card("生图失败", str(exc))))
+                await self._send_message_result(event, self._build_error_result(event, "生图失败", str(exc)))
             except Exception:
                 pass
         finally:
@@ -556,10 +550,18 @@ class ChatGPTResponsesImagePlugin(Star):
         await self._send_message_result(event, event.chain_result(self._build_success_info_components(event, info)))
 
     def _build_success_info_components(self, event: AstrMessageEvent, info: str) -> list[Any]:
-        components: list[Any] = []
         mention_requester = self._to_bool(self._cfg("mention_requester_on_success", True), True)
+        return self._build_notice_components(event, info, mention_requester=mention_requester)
+
+    def _build_error_result(self, event: AstrMessageEvent, title: str, detail: str) -> Any:
+        text = self._format_error_card(title, detail)
+        mention_requester = self._to_bool(self._cfg("mention_requester_on_error", True), True)
+        return event.chain_result(self._build_notice_components(event, text, mention_requester=mention_requester))
+
+    def _build_notice_components(self, event: AstrMessageEvent, text: str, mention_requester: bool) -> list[Any]:
+        components: list[Any] = []
         sender_id = self._event_sender_id(event) if mention_requester else ""
-        first_line, rest = self._split_first_line(info)
+        first_line, rest = self._split_first_line(text)
         if first_line:
             components.append(Comp.Plain(first_line))
         if sender_id and hasattr(Comp, "At"):
@@ -570,7 +572,7 @@ class ChatGPTResponsesImagePlugin(Star):
             remaining_text = "\n" + remaining_text
         if remaining_text:
             components.append(Comp.Plain(remaining_text))
-        return components or [Comp.Plain(info)]
+        return components or [Comp.Plain(text)]
 
     def _event_sender_id(self, event: AstrMessageEvent) -> str:
         getter = getattr(event, "get_sender_id", None)

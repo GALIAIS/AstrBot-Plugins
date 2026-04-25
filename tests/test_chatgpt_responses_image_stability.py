@@ -475,6 +475,41 @@ class PluginStabilityTests(unittest.TestCase):
         self.assertEqual(components[0].text, "✅ 图像生成完成")
         self.assertEqual(components[1].text, "模型：gpt-5.4 → gpt-image-2\n模式：文生图")
 
+    def test_error_result_mentions_request_sender_before_error_detail(self):
+        plugin = self.make_plugin()
+
+        class Event:
+            def get_sender_id(self):
+                return "123456"
+            def chain_result(self, chain):
+                return ("chain", chain)
+
+        result = plugin._build_error_result(Event(), "生图失败", "上游服务端错误，请稍后再试。")
+
+        self.assertEqual(result[0], "chain")
+        chain = result[1]
+        self.assertEqual(chain[0].text, "❌ 生图失败")
+        self.assertEqual(chain[1].text, "\n")
+        self.assertEqual(chain[2].qq, "123456")
+        self.assertEqual(chain[3].text, "\n上游服务端错误，请稍后再试。")
+
+    def test_error_result_can_disable_requester_mention_by_config(self):
+        plugin = self.make_plugin({"mention_requester_on_error": False})
+
+        class Event:
+            def get_sender_id(self):
+                return "123456"
+            def chain_result(self, chain):
+                return ("chain", chain)
+
+        result = plugin._build_error_result(Event(), "生图失败", "上游服务端错误，请稍后再试。")
+
+        self.assertEqual(result[0], "chain")
+        chain = result[1]
+        self.assertEqual(len(chain), 2)
+        self.assertEqual(chain[0].text, "❌ 生图失败")
+        self.assertEqual(chain[1].text, "上游服务端错误，请稍后再试。")
+
     def test_handle_request_yields_accepted_before_api_call(self):
         plugin = self.make_plugin({"api_key": "test", "max_concurrency": 1})
         order = []
