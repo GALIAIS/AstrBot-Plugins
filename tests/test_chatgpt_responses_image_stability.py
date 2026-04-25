@@ -149,12 +149,20 @@ class PluginStabilityTests(unittest.TestCase):
         plugin = self.make_plugin()
 
         self.assertEqual(plugin._match_trigger("gpt生图 一只猫")[0], "generate")
+        self.assertEqual(plugin._match_trigger("gpt改图，把这个图片转为写实风格")[1], "把这个图片转为写实风格")
         self.assertEqual(plugin._match_trigger("GPT 繪圖 一隻貓")[0], "generate")
         self.assertEqual(plugin._match_trigger("gpt generate image a cute cat")[0], "generate")
         self.assertEqual(plugin._match_trigger("gpt改圖 轉成二次元")[0], "edit")
         self.assertEqual(plugin._match_trigger("edit image make it anime")[0], "edit")
         self.assertEqual(plugin._match_trigger("gpt 圖片幫助")[0], "help")
         self.assertEqual(plugin._match_trigger("chatgpt status")[0], "status")
+
+    def test_rest_after_command_strips_leading_commas_and_punctuation(self):
+        plugin = self.make_plugin()
+
+        self.assertEqual(plugin._rest_after_command("gpt改图，把这个图片转为写实风格", "edit"), "把这个图片转为写实风格")
+        self.assertEqual(plugin._rest_after_command("gpt生图，画一只猫", "generate"), "画一只猫")
+        self.assertEqual(plugin._parse_args("，把这个图片转为写实风格")[0], "把这个图片转为写实风格")
 
     def test_registered_command_match_separates_exact_command_from_loose_dispatch(self):
         plugin = self.make_plugin()

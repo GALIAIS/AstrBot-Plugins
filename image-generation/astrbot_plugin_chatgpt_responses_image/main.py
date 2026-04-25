@@ -328,7 +328,7 @@ class ChatGPTResponsesImagePlugin(Star):
                 continue
             rest = text[len(trigger):]
             if self._trigger_boundary_ok(trigger, rest):
-                return rest.lstrip(" \t\r\n:：,，")
+                return self._strip_leading_prompt_separators(rest)
         return None
 
     def _normalize_trigger_text(self, message: str) -> str:
@@ -1278,7 +1278,7 @@ class ChatGPTResponsesImagePlugin(Star):
         return str(url.copy_with(path=path, query=None, fragment=None))
 
     def _parse_args(self, text: str) -> tuple[str, dict[str, Any], str]:
-        raw = (text or "").strip()
+        raw = self._strip_leading_prompt_separators(text)
         try:
             argv = shlex.split(raw) if raw else []
         except ValueError as exc:
@@ -2267,7 +2267,10 @@ class ChatGPTResponsesImagePlugin(Star):
             return matched[1]
         text = (message or "").strip()
         parts = text.split(maxsplit=1)
-        return parts[1] if len(parts) > 1 else ""
+        return self._strip_leading_prompt_separators(parts[1] if len(parts) > 1 else "")
+
+    def _strip_leading_prompt_separators(self, text: str) -> str:
+        return str(text or "").lstrip(" \t\r\n:：,，.。!！?？;；、")
 
     def _brief_error(
         self,
