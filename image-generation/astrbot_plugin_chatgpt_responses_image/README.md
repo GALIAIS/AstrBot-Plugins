@@ -72,6 +72,8 @@
 - `mention_requester_on_error`：错误回传时是否 @ 发起本次生图/改图的用户
 - `user_whitelist`：用户白名单（sender_id/QQ号）；非空时仅白名单可用生图/改图
 - `user_blacklist`：用户黑名单（sender_id/QQ号）；命中后静默忽略生图/改图指令
+- `rate_limit_window_seconds`：频率限制时间窗口（秒）
+- `rate_limit_max_requests`：单个用户在窗口内最多允许的生图/改图次数；超限后静默忽略
 
 ## 行为说明
 

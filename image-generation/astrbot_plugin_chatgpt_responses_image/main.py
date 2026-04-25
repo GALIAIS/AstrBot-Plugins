@@ -218,6 +218,8 @@ class ChatGPTResponsesImagePlugin(Star):
         self._queue_waiting = 0
         self._queue_running = 0
         self._background_tasks: set[asyncio.Task] = set()
+        self._rate_limit_lock = asyncio.Lock()
+        self._sender_rate_limit_hits: dict[str, list[float]] = {}
 
     async def initialize(self):
         logger.info("astrbot_plugin_chatgpt_responses_image 已初始化")
@@ -285,6 +287,9 @@ class ChatGPTResponsesImagePlugin(Star):
             return
         if action in {"generate", "edit"} and not self._is_sender_allowed(event):
             self._debug(f"sender_blocked sender={self._event_sender_id(event)} action={action}")
+            return
+        if action in {"generate", "edit"} and not await self._check_sender_rate_limit(event):
+            self._debug(f"sender_rate_limited sender={self._event_sender_id(event)} action={action}")
             return
         prompt, opts, err = self._parse_args(rest)
         if err:
@@ -614,6 +619,29 @@ class ChatGPTResponsesImagePlugin(Star):
         else:
             return set()
         return set(items)
+
+    async def _check_sender_rate_limit(self, event: AstrMessageEvent) -> bool:
+        sender_id = self._event_sender_id(event)
+        if not sender_id:
+            return True
+        max_requests = max(0, int(self._cfg("rate_limit_max_requests", 0)))
+        window_seconds = max(0.0, float(self._cfg("rate_limit_window_seconds", 0)))
+        if max_requests <= 0 or window_seconds <= 0:
+            return True
+        now = time.monotonic()
+        cutoff = now - window_seconds
+        async with self._rate_limit_lock:
+            hits = [ts for ts in self._sender_rate_limit_hits.get(sender_id, []) if ts > cutoff]
+            if len(hits) >= max_requests:
+                self._sender_rate_limit_hits[sender_id] = hits
+                return False
+            hits.append(now)
+            self._sender_rate_limit_hits[sender_id] = hits
+            stale_keys = [key for key, values in self._sender_rate_limit_hits.items() if not values or values[-1] <= cutoff]
+            for key in stale_keys:
+                if key != sender_id:
+                    self._sender_rate_limit_hits.pop(key, None)
+        return True
 
     def _split_first_line(self, text: str) -> tuple[str, str]:
         value = str(text or "")

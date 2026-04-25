@@ -530,6 +530,8 @@ class PluginStabilityTests(unittest.TestCase):
                 return "123456"
             def plain_result(self, text):
                 return ("plain", text)
+            def chain_result(self, chain):
+                return ("chain", chain)
 
         async def scenario():
             return [item async for item in plugin._dispatch_action(Event(), "generate", "cat")]
@@ -565,6 +567,8 @@ class PluginStabilityTests(unittest.TestCase):
                 return "123456"
             def plain_result(self, text):
                 return ("plain", text)
+            def chain_result(self, chain):
+                return ("chain", chain)
             async def send(self, result):
                 order.append(("sent", result))
             def chain_result(self, chain):
@@ -606,6 +610,91 @@ class PluginStabilityTests(unittest.TestCase):
             return help_results, status_results
 
         help_results, status_results = asyncio.run(scenario())
+        self.assertTrue(help_results)
+        self.assertTrue(status_results)
+
+    def test_rate_limit_silently_ignores_requests_over_limit(self):
+        plugin = self.make_plugin({"rate_limit_window_seconds": 60, "rate_limit_max_requests": 2})
+        counter = {"now": 1000.0}
+        original_monotonic = self.module.time.monotonic
+        self.module.time.monotonic = lambda: counter["now"]
+        try:
+            class Event:
+                def __init__(self):
+                    self.message_str = "gpt生图 cat"
+                def get_sender_id(self):
+                    return "123456"
+                def plain_result(self, text):
+                    return ("plain", text)
+                def chain_result(self, chain):
+                    return ("chain", chain)
+
+            async def scenario():
+                first = [item async for item in plugin._dispatch_action(Event(), "generate", "cat")]
+                second = [item async for item in plugin._dispatch_action(Event(), "generate", "cat")]
+                third = [item async for item in plugin._dispatch_action(Event(), "generate", "cat")]
+                return first, second, third
+
+            first, second, third = asyncio.run(scenario())
+        finally:
+            self.module.time.monotonic = original_monotonic
+
+        self.assertTrue(first)
+        self.assertTrue(second)
+        self.assertEqual(third, [])
+
+    def test_rate_limit_expires_after_window(self):
+        plugin = self.make_plugin({"rate_limit_window_seconds": 10, "rate_limit_max_requests": 1})
+        counter = {"now": 1000.0}
+        original_monotonic = self.module.time.monotonic
+        self.module.time.monotonic = lambda: counter["now"]
+        try:
+            class Event:
+                def __init__(self):
+                    self.message_str = "gpt生图 cat"
+                def get_sender_id(self):
+                    return "123456"
+                def plain_result(self, text):
+                    return ("plain", text)
+                def chain_result(self, chain):
+                    return ("chain", chain)
+
+            async def scenario():
+                first = [item async for item in plugin._dispatch_action(Event(), "generate", "cat")]
+                blocked = [item async for item in plugin._dispatch_action(Event(), "generate", "cat")]
+                counter["now"] += 11
+                allowed_again = [item async for item in plugin._dispatch_action(Event(), "generate", "cat")]
+                return first, blocked, allowed_again
+
+            first, blocked, allowed_again = asyncio.run(scenario())
+        finally:
+            self.module.time.monotonic = original_monotonic
+
+        self.assertTrue(first)
+        self.assertEqual(blocked, [])
+        self.assertTrue(allowed_again)
+
+    def test_help_and_status_are_not_blocked_by_rate_limit(self):
+        plugin = self.make_plugin({"rate_limit_window_seconds": 60, "rate_limit_max_requests": 1})
+
+        class Event:
+            def __init__(self):
+                self.message_str = "gpt图帮助"
+            def get_sender_id(self):
+                return "123456"
+            def plain_result(self, text):
+                return ("plain", text)
+
+        async def scenario():
+            first_generate = await plugin._check_sender_rate_limit(Event())
+            second_generate = await plugin._check_sender_rate_limit(Event())
+            help_results = [item async for item in plugin._dispatch_action(Event(), "help", "")]
+            status_results = [item async for item in plugin._dispatch_action(Event(), "status", "")]
+            return first_generate, second_generate, help_results, status_results
+
+        first_generate, second_generate, help_results, status_results = asyncio.run(scenario())
+        self.assertTrue(first_generate)
+        self.assertFalse(second_generate)
         self.assertTrue(help_results)
         self.assertTrue(status_results)
 
