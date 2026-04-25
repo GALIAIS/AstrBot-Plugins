@@ -157,6 +157,44 @@ class PluginStabilityTests(unittest.TestCase):
         self.assertIsNone(plugin._match_registered_command("gpt 圖片狀態"))
         self.assertIsNone(plugin._match_registered_command("gpt 生成圖片 一隻貓"))
 
+    def test_generate_payload_forces_image_tool_and_generation_instructions(self):
+        plugin = self.make_plugin()
+        opts, err = plugin._resolve_request_options({})
+
+        self.assertFalse(err)
+        payload = plugin._build_responses_payload(
+            prompt="画一只猫",
+            request_opts=opts,
+            action="generate",
+            input_images=[],
+        )
+
+        self.assertEqual(payload["tools"][0]["type"], "image_generation")
+        self.assertEqual(payload["tools"][0]["action"], "generate")
+        self.assertEqual(payload["tool_choice"], {"type": "image_generation"})
+        self.assertIn("Always use the image_generation tool", payload["instructions"])
+        self.assertIn("return a final image", payload["instructions"])
+        self.assertNotIn("helpful assistant", payload["instructions"].lower())
+
+    def test_edit_payload_forces_image_tool_and_edit_instructions(self):
+        plugin = self.make_plugin()
+        opts, err = plugin._resolve_request_options({"image_refs": ["reply-image"]})
+
+        self.assertFalse(err)
+        payload = plugin._build_responses_payload(
+            prompt="和华莱士套餐联动",
+            request_opts=opts,
+            action="edit",
+            input_images=[self.module.InputImage(source="reply", data=PNG_1X1, mime_type="image/png", filename="x.png")],
+        )
+
+        self.assertEqual(payload["tools"][0]["type"], "image_generation")
+        self.assertEqual(payload["tools"][0]["action"], "edit")
+        self.assertEqual(payload["tool_choice"], {"type": "image_generation"})
+        self.assertIn("Always use the image_generation tool", payload["instructions"])
+        self.assertIn("return an edited image", payload["instructions"])
+        self.assertNotIn("helpful assistant", payload["instructions"].lower())
+
     def test_sse_upstream_stream_error_is_readable_without_retry_copy(self):
         plugin = self.make_plugin()
         sse = "data: " + json.dumps({

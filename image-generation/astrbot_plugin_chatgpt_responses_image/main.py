@@ -532,10 +532,10 @@ class ChatGPTResponsesImagePlugin(Star):
             session_id = configured_session or f"chatgpt-responses-image-{int(time.time() * 1000)}"
 
         instructions = str(
-            opts.get("instructions") or self._cfg("default_instructions", "you are a helpful assistant")
+            opts.get("instructions") or self._cfg("default_instructions", "")
         ).strip()
         if not instructions:
-            instructions = "you are a helpful assistant"
+            instructions = self._default_image_instructions("edit" if opts.get("image_refs") else "generate")
 
         resolved: dict[str, Any] = {
             "model": model,
@@ -571,6 +571,7 @@ class ChatGPTResponsesImagePlugin(Star):
     ) -> dict[str, Any]:
         tool: dict[str, Any] = {
             "type": "image_generation",
+            "action": "edit" if action == "edit" else "generate",
             "size": request_opts["size"],
             "output_format": request_opts["output_format"],
         }
@@ -584,11 +585,23 @@ class ChatGPTResponsesImagePlugin(Star):
                 }
             ],
             "tools": [tool],
-            "instructions": request_opts.get("instructions") or "you are a helpful assistant",
-            "tool_choice": "auto",
+            "instructions": request_opts.get("instructions") or self._default_image_instructions(action),
+            "tool_choice": {"type": "image_generation"},
             "stream": True,
             "store": False,
         }
+
+    def _default_image_instructions(self, action: str) -> str:
+        if action == "edit":
+            return (
+                "You are an image editing assistant. Always use the image_generation tool and return an edited image, "
+                "not advice, prompt suggestions, analysis, or conversational text. Treat the user's request as the exact "
+                "edit instruction for the provided image context."
+            )
+        return (
+            "You are an image generation assistant. Always use the image_generation tool and return a final image, "
+            "not advice, prompt suggestions, analysis, or conversational text."
+        )
 
     async def _request_responses_api(
         self,
