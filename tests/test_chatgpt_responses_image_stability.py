@@ -459,6 +459,22 @@ class PluginStabilityTests(unittest.TestCase):
         self.assertEqual(components[2].qq, "123456")
         self.assertEqual(components[3].text, "\n模型：gpt-5.4 → gpt-image-2\n模式：文生图")
 
+    def test_success_info_chain_can_disable_requester_mention_by_config(self):
+        plugin = self.make_plugin({"mention_requester_on_success": False})
+
+        class Event:
+            def get_sender_id(self):
+                return "123456"
+
+        components = plugin._build_success_info_components(
+            Event(),
+            "✅ 图像生成完成\n模型：gpt-5.4 → gpt-image-2\n模式：文生图",
+        )
+
+        self.assertEqual(len(components), 2)
+        self.assertEqual(components[0].text, "✅ 图像生成完成")
+        self.assertEqual(components[1].text, "模型：gpt-5.4 → gpt-image-2\n模式：文生图")
+
     def test_handle_request_yields_accepted_before_api_call(self):
         plugin = self.make_plugin({"api_key": "test", "max_concurrency": 1})
         order = []

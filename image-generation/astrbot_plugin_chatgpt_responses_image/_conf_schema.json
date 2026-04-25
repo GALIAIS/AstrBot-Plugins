@@ -105,6 +105,11 @@
     "type": "bool",
     "default": false
   },
+  "mention_requester_on_success": {
+    "description": "成功回传时是否 @ 发起本次生图/改图的用户",
+    "type": "bool",
+    "default": true
+  },
   "debug": {
     "description": "输出调试日志（记录 transport、SSE 解析、回复取图等）",
     "type": "bool",

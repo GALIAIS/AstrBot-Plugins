@@ -557,7 +557,8 @@ class ChatGPTResponsesImagePlugin(Star):
 
     def _build_success_info_components(self, event: AstrMessageEvent, info: str) -> list[Any]:
         components: list[Any] = []
-        sender_id = self._event_sender_id(event)
+        mention_requester = self._to_bool(self._cfg("mention_requester_on_success", True), True)
+        sender_id = self._event_sender_id(event) if mention_requester else ""
         first_line, rest = self._split_first_line(info)
         if first_line:
             components.append(Comp.Plain(first_line))
