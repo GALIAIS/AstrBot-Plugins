@@ -91,13 +91,25 @@ class Novel2ApiPlugin(Star):
         uid = str(event.get_sender_id())
         quota, msg = self._sign_in_quota(uid)
         self._save_state()
-        yield event.plain_result(f"{msg}\n当前可用额度：{quota}")
+        yield event.plain_result(
+            self._format_card(
+                "签到结果",
+                [msg, f"当前可用额度：{quota}"],
+                icon="✅",
+            )
+        )
 
     @filter.command("nai额度", alias={"naiquota"})
     async def quota_command(self, event: AstrMessageEvent):
         uid = str(event.get_sender_id())
         quota = self._get_user_quota(uid)
-        yield event.plain_result(f"当前可用额度：{quota}")
+        yield event.plain_result(
+            self._format_card(
+                "额度信息",
+                [f"当前可用额度：{quota}"],
+                icon="💳",
+            )
+        )
 
     @filter.command("nai状态", alias={"naistatus"})
     async def status_command(self, event: AstrMessageEvent):
@@ -134,14 +146,20 @@ class Novel2ApiPlugin(Star):
         if arg in {"on", "开启", "开"}:
             self.config["debug"] = True
             saved = self._save_config()
-            yield event.plain_result("已开启调试日志。" + ("（已保存）" if saved else "（仅内存生效）"))
+            yield event.plain_result(self._format_card("调试日志", ["已开启" + ("（已保存）" if saved else "（仅内存生效）")], icon="🛠️"))
             return
         if arg in {"off", "关闭", "关"}:
             self.config["debug"] = False
             saved = self._save_config()
-            yield event.plain_result("已关闭调试日志。" + ("（已保存）" if saved else "（仅内存生效）"))
+            yield event.plain_result(self._format_card("调试日志", ["已关闭" + ("（已保存）" if saved else "（仅内存生效）")], icon="🛠️"))
             return
-        yield event.plain_result(f"当前调试日志：{'开启' if self._debug_enabled() else '关闭'}。\n用法：/nai调试 开启|关闭")
+        yield event.plain_result(
+            self._format_card(
+                "调试日志",
+                [f"当前状态：{'开启' if self._debug_enabled() else '关闭'}", "用法：/nai调试 开启|关闭"],
+                icon="🛠️",
+            )
+        )
 
     @filter.command("nai预设保存", alias={"naisave"})
     async def save_preset_command(self, event: AstrMessageEvent):
@@ -149,39 +167,39 @@ class Novel2ApiPlugin(Star):
         try:
             argv = shlex.split(rest) if rest else []
         except ValueError as exc:
-            yield event.plain_result(f"参数解析失败：{exc}")
+            yield self._build_error_result(event, "参数错误", f"参数解析失败：{exc}")
             return
         if len(argv) < 2:
-            yield event.plain_result("用法：/nai预设保存 <名称> <内容>")
+            yield self._build_error_result(event, "参数错误", "用法：/nai预设保存 <名称> <内容>")
             return
         name = argv[0].strip()
         content = " ".join(argv[1:]).strip()
         self._state.setdefault("presets", {})[name] = content
         self._save_state()
-        yield event.plain_result(f"已保存预设：{name}")
+        yield event.plain_result(self._format_card("预设已保存", [f"名称：{name}"], icon="✅"))
 
     @filter.command("nai预设列表", alias={"nailspreset"})
     async def list_preset_command(self, event: AstrMessageEvent):
         presets = self._state.get("presets", {})
         if not isinstance(presets, dict) or not presets:
-            yield event.plain_result("暂无预设。")
+            yield event.plain_result(self._format_card("预设列表", ["暂无预设。"], icon="🗂️"))
             return
         lines = [f"- {k}" for k in sorted(presets.keys())[:100]]
-        yield event.plain_result("预设列表：\n" + "\n".join(lines))
+        yield event.plain_result(self._format_card("预设列表", lines, icon="🗂️"))
 
     @filter.command("nai预设删除", alias={"naidelpreset"})
     async def del_preset_command(self, event: AstrMessageEvent):
         name = self._rest_after_command(event.message_str).strip()
         if not name:
-            yield event.plain_result("用法：/nai预设删除 <名称>")
+            yield self._build_error_result(event, "参数错误", "用法：/nai预设删除 <名称>")
             return
         presets = self._state.get("presets", {})
         if not isinstance(presets, dict) or name not in presets:
-            yield event.plain_result("预设不存在。")
+            yield self._build_error_result(event, "参数错误", "预设不存在。")
             return
         del presets[name]
         self._save_state()
-        yield event.plain_result(f"已删除预设：{name}")
+        yield event.plain_result(self._format_card("预设已删除", [f"名称：{name}"], icon="✅"))
 
     @filter.command("nai自动画图", alias={"naiauto"})
     async def auto_mode_command(self, event: AstrMessageEvent):
@@ -195,21 +213,27 @@ class Novel2ApiPlugin(Star):
         if arg in {"on", "开启", "开"}:
             auto[chat_key] = True
             self._save_state()
-            yield event.plain_result("已开启本会话自动画图。")
+            yield event.plain_result(self._format_card("自动画图", ["已开启本会话自动画图。"], icon="✅"))
             return
         if arg in {"off", "关闭", "关"}:
             auto[chat_key] = False
             self._save_state()
-            yield event.plain_result("已关闭本会话自动画图。")
+            yield event.plain_result(self._format_card("自动画图", ["已关闭本会话自动画图。"], icon="✅"))
             return
         status = bool(auto.get(chat_key, False))
-        yield event.plain_result(f"自动画图当前状态：{'开启' if status else '关闭'}。\n用法：/nai自动画图 开启|关闭")
+        yield event.plain_result(
+            self._format_card(
+                "自动画图",
+                [f"当前状态：{'开启' if status else '关闭'}", "用法：/nai自动画图 开启|关闭"],
+                icon="🤖",
+            )
+        )
 
     @filter.command("nai画图", alias={"nai智能画图", "nai绘画"})
     async def smart_image_command(self, event: AstrMessageEvent):
         desc = self._rest_after_command(event.message_str).strip()
         if not desc:
-            yield event.plain_result("用法：/nai画图 <自然语言描述> [与 nai 相同参数]")
+            yield self._build_error_result(event, "参数错误", "用法：/nai画图 <自然语言描述> [与 nai 相同参数]")
             return
         prompt, opts = await self._smart_prompt_from_text(event, desc)
         for result in await self._handle_generate(event, prompt, opts):
@@ -219,7 +243,7 @@ class Novel2ApiPlugin(Star):
     async def smart_image_landscape_command(self, event: AstrMessageEvent):
         desc = self._rest_after_command(event.message_str).strip()
         if not desc:
-            yield event.plain_result("用法：/nai绘画横图 <自然语言描述>")
+            yield self._build_error_result(event, "参数错误", "用法：/nai绘画横图 <自然语言描述>")
             return
         prompt, opts = await self._smart_prompt_from_text(event, desc)
         opts["size"] = "landscape"
@@ -230,7 +254,7 @@ class Novel2ApiPlugin(Star):
     async def smart_image_portrait_command(self, event: AstrMessageEvent):
         desc = self._rest_after_command(event.message_str).strip()
         if not desc:
-            yield event.plain_result("用法：/nai绘画竖图 <自然语言描述>")
+            yield self._build_error_result(event, "参数错误", "用法：/nai绘画竖图 <自然语言描述>")
             return
         prompt, opts = await self._smart_prompt_from_text(event, desc)
         opts["size"] = "portrait"
@@ -241,7 +265,7 @@ class Novel2ApiPlugin(Star):
     async def smart_image_square_command(self, event: AstrMessageEvent):
         desc = self._rest_after_command(event.message_str).strip()
         if not desc:
-            yield event.plain_result("用法：/nai绘画方图 <自然语言描述>")
+            yield self._build_error_result(event, "参数错误", "用法：/nai绘画方图 <自然语言描述>")
             return
         prompt, opts = await self._smart_prompt_from_text(event, desc)
         opts["size"] = "square"
@@ -273,21 +297,27 @@ class Novel2ApiPlugin(Star):
             return
         ok, token, err = await self._resolve_auth_token(force_login=True)
         if not ok:
-            yield event.plain_result(f"登录失败：{err}")
+            yield self._build_error_result(event, "登录失败", self._brief_error(err, "鉴权失败，请检查 api_key/access_key。"))
             return
         masked = token[:8] + "..." if len(token) > 11 else token
-        yield event.plain_result(f"登录成功，token={masked}")
+        yield event.plain_result(self._format_card("登录成功", [f"token：{masked}"], icon="✅"))
 
     @filter.command("nai模型", alias={"naimodels", "nai模型列表"})
     async def models_command(self, event: AstrMessageEvent):
         models = await self._get_image_models(force=False)
         if not models:
-            yield event.plain_result("未获取到可用生图模型，请先执行 /nai登录 或检查 api_key/access_key。")
+            yield self._build_error_result(event, "模型获取失败", "未获取到可用生图模型，请先执行 /nai登录 或检查 api_key/access_key。")
             return
         current = str(self._cfg("default_model", "")).strip()
         preview = "\n".join(f"- {m}" for m in models[:80])
         suffix = "\n...(已截断)" if len(models) > 80 else ""
-        yield event.plain_result(f"当前默认模型：{current or '(未设置)'}\n可选生图模型({len(models)}):\n{preview}{suffix}")
+        yield event.plain_result(
+            self._format_card(
+                "生图模型",
+                [f"当前默认模型：{current or '(未设置)'}", f"可选生图模型（{len(models)}）:", preview + suffix],
+                icon="🧠",
+            )
+        )
 
     @filter.command("nai采样器", alias={"naisampler", "nai采样器列表"})
     async def sampler_command(self, event: AstrMessageEvent):
@@ -296,7 +326,11 @@ class Novel2ApiPlugin(Star):
         if current and current not in set(self._OFFICIAL_SAMPLERS):
             lines.append(f"- (当前配置未在官方列表中) {current}")
         yield event.plain_result(
-            f"当前默认采样器：{current or '(未设置)'}\n官方采样器({len(self._OFFICIAL_SAMPLERS)}):\n" + "\n".join(lines)
+            self._format_card(
+                "官方采样器",
+                [f"当前默认采样器：{current or '(未设置)'}", f"官方采样器（{len(self._OFFICIAL_SAMPLERS)}）:", *lines],
+                icon="🎛️",
+            )
         )
 
     @filter.command("nai切换模型", alias={"naisetmodel"})
@@ -307,15 +341,21 @@ class Novel2ApiPlugin(Star):
             return
         target = self._rest_after_command(event.message_str).strip()
         if not target:
-            yield event.plain_result("用法：/nai切换模型 <model_id>")
+            yield self._build_error_result(event, "参数错误", "用法：/nai切换模型 <model_id>")
             return
         models = await self._get_image_models(force=False)
         if models and target not in set(models):
-            yield event.plain_result("模型不在可选生图列表中，请先 /nai模型 查看。")
+            yield self._build_error_result(event, "参数错误", "模型不在可选生图列表中，请先 /nai模型 查看。")
             return
         self.config["default_model"] = target
         saved = self._save_config()
-        yield event.plain_result(f"已切换默认生图模型：{target}" + ("（已保存）" if saved else "（仅内存生效）"))
+        yield event.plain_result(
+            self._format_card(
+                "默认模型已切换",
+                [f"模型：{target}" + ("（已保存）" if saved else "（仅内存生效）")],
+                icon="✅",
+            )
+        )
 
     @filter.command("nai同步模型", alias={"naisyncmodels"})
     async def sync_models_command(self, event: AstrMessageEvent):
@@ -324,7 +364,10 @@ class Novel2ApiPlugin(Star):
             yield deny
             return
         ok, msg = await self._auto_sync_image_model_options(force=True)
-        yield event.plain_result(("同步成功：" if ok else "同步失败：") + msg)
+        if ok:
+            yield event.plain_result(self._format_card("模型同步成功", [msg], icon="✅"))
+            return
+        yield self._build_error_result(event, "模型同步失败", msg)
 
     @filter.command("nai生图", alias={"nai", "naiimg"})
     async def image_generate_command(self, event: AstrMessageEvent):
@@ -480,7 +523,7 @@ class Novel2ApiPlugin(Star):
             return []
         raw_request = opts.get("raw_request") or {}
         if not prompt and not raw_request:
-            return [event.plain_result("用法：/nai生图 <prompt> [--size portrait|landscape|square] [--model xxx] [--negative xxx] [--json '{}'] [--raw '{}']")]
+            return [self._build_error_result(event, "参数错误", "用法：/nai生图 <prompt> [--size portrait|landscape|square] [--model xxx] [--negative xxx] [--json '{}'] [--raw '{}']")]
         token_ok, token, token_err = await self._resolve_auth_token()
         if not token_ok:
             return [self._build_error_result(event, "鉴权失败", self._brief_error(token_err, "鉴权失败，请检查 api_key/access_key。"))]
@@ -2023,29 +2066,24 @@ class Novel2ApiPlugin(Star):
         return text, ""
 
     def _help_text(self) -> str:
-        return (
-            "NovelAI 直连生图指令：\n"
-            "- /nai <tag prompt> 基础模式\n"
-            "- /nai画图 <自然语言> 智能模式（LLM 转标签）\n"
-            "- /nai绘画横图|/nai绘画竖图|/nai绘画方图 <自然语言>（快捷固定尺寸）\n"
-            "- /nai自动画图 开启|关闭（管理员）\n"
-            "- /nai登录（管理员，用 access_key 换 accessToken）\n"
-            "- /nai模型 查看可选生图模型\n"
-            "- /nai采样器 查看官方采样器预设列表\n"
-            "- /nai切换模型 <model_id>（管理员）\n"
-            "- /nai同步模型（管理员，从 image_models 配置刷新）\n"
-            "- /nai生图 <prompt> [--model m] [--negative n] [--size portrait|landscape|square|竖图|横图|方图] [--steps 28] [--scale 5] [--sampler s] [--seed 1] [--n 1]\n"
-            "- /nai图生图 <prompt>（管理员）\n"
-            "- /nai导演工具 ...（管理员）\n"
-            "- /nai编码参考图 ...（管理员）\n"
-            "- /nai签到 /nai额度 /nai状态（额度与队列）\n"
-            "- /nai调试 开启|关闭（管理员）\n"
-            "- /nai预设保存 <名称> <内容> /nai预设列表 /nai预设删除 <名称>\n"
-            "固定尺寸：Portrait(832x1216), Landscape(1216x832), Square(1024x1024)\n"
-            "附图规则：带图（i2i/附图生图）会自动按原图分辨率匹配到最接近的固定尺寸后再提交，避免大图消耗。\n"
-            "说明：--n 会拆成多个任务进入队列，按顺序逐张生成。\n"
-            "权限：仅管理员可自定义分辨率和全部功能；其他用户仅允许不消耗路径（单张文生图、低分辨率）。\n"
-            "参数覆盖：nai画图/nai自动画图 支持 key=value（如 model=.. size=方图 steps=23 seed=1 preset=默认 role=...）。"
+        return self._format_card(
+            "NovelAI 指令帮助",
+            [
+                "nai <tag prompt>：基础模式",
+                "nai画图 <自然语言>：智能模式（LLM 转标签）",
+                "nai绘画横图 / nai绘画竖图 / nai绘画方图 <自然语言>",
+                "nai自动画图 开启|关闭（管理员）",
+                "nai登录 / nai模型 / nai采样器 / nai切换模型 / nai同步模型",
+                "nai生图 <prompt> [--model m] [--negative n] [--size portrait|landscape|square|竖图|横图|方图] [--steps 28] [--scale 5] [--sampler s] [--seed 1] [--n 1]",
+                "nai图生图 / nai导演工具 / nai编码参考图（管理员）",
+                "nai签到 / nai额度 / nai状态",
+                "nai预设保存 <名称> <内容> / nai预设列表 / nai预设删除 <名称>",
+                "固定尺寸：Portrait(832x1216) · Landscape(1216x832) · Square(1024x1024)",
+                "附图规则：带图会自动匹配到最接近的固定尺寸后再提交，避免大图消耗。",
+                "说明：--n 会拆成多个任务进入队列，按顺序逐张生成。",
+                "权限：仅管理员可自定义分辨率和全部功能；其他用户仅允许不消耗路径。",
+            ],
+            icon="📘",
         )
 
     def _is_admin_user(self, event: AstrMessageEvent) -> bool:

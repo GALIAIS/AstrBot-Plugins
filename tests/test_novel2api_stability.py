@@ -219,6 +219,38 @@ class Novel2ApiStabilityTests(unittest.TestCase):
         self.assertIn("sampler=k_euler_ancestral", text)
         self.assertIn("耗时=3.20s", text)
 
+    def test_help_text_is_card_style(self):
+        plugin = self.make_plugin()
+        text = plugin._help_text()
+        self.assertIn("📘 NovelAI 指令帮助", text)
+        self.assertIn("固定尺寸：Portrait", text)
+
+    def test_quota_card_style(self):
+        plugin = self.make_plugin({"default_daily_quota": 3})
+
+        async def scenario():
+            results = [item async for item in plugin.quota_command(Event("123456"))]
+            return results
+
+        results = asyncio.run(scenario())
+        self.assertEqual(results[0][0], "plain")
+        self.assertIn("💳 额度信息", results[0][1])
+
+    def test_models_command_uses_card_style(self):
+        plugin = self.make_plugin({"default_model": "nai-diffusion-4-5-curated"})
+
+        async def fake_models(force=False):
+            return ["nai-diffusion-4-5-curated", "nai-diffusion-4-5-full"]
+
+        async def scenario():
+            plugin._get_image_models = fake_models
+            results = [item async for item in plugin.models_command(Event("123456"))]
+            return results
+
+        results = asyncio.run(scenario())
+        self.assertEqual(results[0][0], "plain")
+        self.assertIn("🧠 生图模型", results[0][1])
+
 
 if __name__ == "__main__":
     unittest.main()
