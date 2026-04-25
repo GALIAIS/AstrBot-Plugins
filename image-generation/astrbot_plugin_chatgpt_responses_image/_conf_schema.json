@@ -125,6 +125,11 @@
     "type": "list",
     "default": []
   },
+  "admin_user_ids": {
+    "description": "管理员用户列表（sender_id/QQ号）。命中后不受黑白名单和频率限制影响",
+    "type": "list",
+    "default": []
+  },
   "rate_limit_window_seconds": {
     "description": "频率限制时间窗口（秒）。大于 0 且 max_requests > 0 时生效",
     "type": "float",

@@ -556,6 +556,41 @@ class PluginStabilityTests(unittest.TestCase):
         results = asyncio.run(scenario())
         self.assertEqual(results, [])
 
+    def test_admin_sender_bypasses_user_lists(self):
+        plugin = self.make_plugin({"api_key": "test", "user_whitelist": ["999999"], "user_blacklist": ["123456"], "admin_user_ids": ["123456"]})
+        order = []
+
+        class Event:
+            def __init__(self):
+                self.message_str = "gpt生图 cat"
+            def get_sender_id(self):
+                return "123456"
+            def plain_result(self, text):
+                return ("plain", text)
+            def chain_result(self, chain):
+                return ("chain", chain)
+            async def send(self, result):
+                order.append(("sent", result))
+
+        async def fake_request(**kwargs):
+            order.append("api_called")
+            result = self.module.ImageAPIResult(
+                images=[self.module.OutputImage(data=PNG_1X1, mime_type="image/png")],
+                size="1024x1024",
+                output_format="png",
+            )
+            return True, result, ""
+
+        async def scenario():
+            plugin._request_responses_api = fake_request
+            results = [item async for item in plugin._dispatch_action(Event(), "generate", "cat")]
+            await asyncio.gather(*list(plugin._background_tasks))
+            return results
+
+        results = asyncio.run(scenario())
+        self.assertTrue(results)
+        self.assertIn("api_called", order)
+
     def test_whitelisted_sender_can_continue_into_request_flow(self):
         plugin = self.make_plugin({"api_key": "test", "user_whitelist": ["123456"]})
         order = []
@@ -614,7 +649,7 @@ class PluginStabilityTests(unittest.TestCase):
         self.assertTrue(status_results)
 
     def test_rate_limit_silently_ignores_requests_over_limit(self):
-        plugin = self.make_plugin({"rate_limit_window_seconds": 60, "rate_limit_max_requests": 2})
+        plugin = self.make_plugin({"api_key": "test", "rate_limit_window_seconds": 60, "rate_limit_max_requests": 2})
         counter = {"now": 1000.0}
         original_monotonic = self.module.time.monotonic
         self.module.time.monotonic = lambda: counter["now"]
@@ -644,7 +679,7 @@ class PluginStabilityTests(unittest.TestCase):
         self.assertEqual(third, [])
 
     def test_rate_limit_expires_after_window(self):
-        plugin = self.make_plugin({"rate_limit_window_seconds": 10, "rate_limit_max_requests": 1})
+        plugin = self.make_plugin({"api_key": "test", "rate_limit_window_seconds": 10, "rate_limit_max_requests": 1})
         counter = {"now": 1000.0}
         original_monotonic = self.module.time.monotonic
         self.module.time.monotonic = lambda: counter["now"]
@@ -697,6 +732,49 @@ class PluginStabilityTests(unittest.TestCase):
         self.assertFalse(second_generate)
         self.assertTrue(help_results)
         self.assertTrue(status_results)
+
+    def test_admin_sender_bypasses_rate_limit(self):
+        plugin = self.make_plugin({"api_key": "test", "rate_limit_window_seconds": 60, "rate_limit_max_requests": 1, "admin_user_ids": ["123456"]})
+        counter = {"now": 1000.0}
+        original_monotonic = self.module.time.monotonic
+        self.module.time.monotonic = lambda: counter["now"]
+        order = []
+        try:
+            class Event:
+                def __init__(self):
+                    self.message_str = "gpt生图 cat"
+                def get_sender_id(self):
+                    return "123456"
+                def plain_result(self, text):
+                    return ("plain", text)
+                def chain_result(self, chain):
+                    return ("chain", chain)
+                async def send(self, result):
+                    order.append(("sent", result))
+
+            async def fake_request(**kwargs):
+                order.append("api_called")
+                result = self.module.ImageAPIResult(
+                    images=[self.module.OutputImage(data=PNG_1X1, mime_type="image/png")],
+                    size="1024x1024",
+                    output_format="png",
+                )
+                return True, result, ""
+
+            async def scenario():
+                plugin._request_responses_api = fake_request
+                first = [item async for item in plugin._dispatch_action(Event(), "generate", "cat")]
+                second = [item async for item in plugin._dispatch_action(Event(), "generate", "cat")]
+                await asyncio.gather(*list(plugin._background_tasks))
+                return first, second
+
+            first, second = asyncio.run(scenario())
+        finally:
+            self.module.time.monotonic = original_monotonic
+
+        self.assertTrue(first)
+        self.assertTrue(second)
+        self.assertGreaterEqual(order.count("api_called"), 2)
 
     def test_input_image_read_error_is_sanitized_without_leaking_source_path(self):
         plugin = self.make_plugin()

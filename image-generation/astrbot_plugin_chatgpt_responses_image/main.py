@@ -602,6 +602,8 @@ class ChatGPTResponsesImagePlugin(Star):
         sender_id = self._event_sender_id(event)
         if not sender_id:
             return True
+        if self._is_sender_admin(event):
+            return True
         blacklist = self._normalize_id_list(self._cfg("user_blacklist", []))
         if sender_id in blacklist:
             return False
@@ -624,6 +626,8 @@ class ChatGPTResponsesImagePlugin(Star):
         sender_id = self._event_sender_id(event)
         if not sender_id:
             return True
+        if self._is_sender_admin(event):
+            return True
         max_requests = max(0, int(self._cfg("rate_limit_max_requests", 0)))
         window_seconds = max(0.0, float(self._cfg("rate_limit_window_seconds", 0)))
         if max_requests <= 0 or window_seconds <= 0:
@@ -642,6 +646,13 @@ class ChatGPTResponsesImagePlugin(Star):
                 if key != sender_id:
                     self._sender_rate_limit_hits.pop(key, None)
         return True
+
+    def _is_sender_admin(self, event: AstrMessageEvent) -> bool:
+        sender_id = self._event_sender_id(event)
+        if not sender_id:
+            return False
+        admin_ids = self._normalize_id_list(self._cfg("admin_user_ids", []))
+        return sender_id in admin_ids
 
     def _split_first_line(self, text: str) -> tuple[str, str]:
         value = str(text or "")
