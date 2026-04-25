@@ -186,6 +186,18 @@ class Novel2ApiStabilityTests(unittest.TestCase):
         self.assertEqual(len(at_nodes), 1)
         self.assertEqual(at_nodes[0].qq, "123456")
 
+    def test_admin_denied_result_mentions_requester(self):
+        plugin = self.make_plugin({"mention_requester_on_error": True})
+        result_type, chain = plugin._deny_if_not_admin(Event("123456"), "nai图生图")
+        self.assertEqual(result_type, "chain")
+        self.assertTrue(any(hasattr(item, "qq") and item.qq == "123456" for item in chain))
+
+    def test_director_success_card_mentions_tool(self):
+        plugin = self.make_plugin()
+        text = plugin._format_card("导演工具处理完成", ["工具：remove_bg", "结果：第 1/1 张"], icon="✅")
+        self.assertIn("导演工具处理完成", text)
+        self.assertIn("工具：remove_bg", text)
+
     def test_success_card_contains_key_parameters(self):
         plugin = self.make_plugin()
         text = plugin._format_success_card(

@@ -330,7 +330,7 @@ class Novel2ApiPlugin(Star):
     async def image_generate_command(self, event: AstrMessageEvent):
         prompt, opts, err = self._parse_generate_args(self._rest_after_command(event.message_str))
         if err:
-            yield event.plain_result(err)
+            yield self._build_error_result(event, "参数错误", err)
             return
         for result in await self._handle_generate(event, prompt, opts):
             yield result
@@ -343,7 +343,7 @@ class Novel2ApiPlugin(Star):
             return
         prompt, opts, err = self._parse_generate_args(self._rest_after_command(event.message_str))
         if err:
-            yield event.plain_result(err)
+            yield self._build_error_result(event, "参数错误", err)
             return
         opts["action"] = "img2img"
         for result in await self._handle_generate(event, prompt, opts):
@@ -357,46 +357,63 @@ class Novel2ApiPlugin(Star):
             return
         rest = self._rest_after_command(event.message_str).strip()
         if not rest:
-            yield event.plain_result("用法：/nai导演工具 <remove_bg|line_art|sketch|colorize|emotion|declutter> [--image 路径/URL]")
+            yield self._build_error_result(event, "参数错误", "用法：/nai导演工具 <remove_bg|line_art|sketch|colorize|emotion|declutter> [--image 路径/URL]")
             return
         try:
             argv = shlex.split(rest)
         except ValueError as exc:
-            yield event.plain_result(f"参数解析失败：{exc}")
+            yield self._build_error_result(event, "参数错误", f"参数解析失败：{exc}")
             return
         tool = argv[0].strip() if argv else ""
         if tool not in self._DIRECTOR_TOOLS:
-            yield event.plain_result("不支持的工具类型。")
+            yield self._build_error_result(event, "参数错误", "不支持的工具类型。")
             return
         image_ref = self._extract_opt_value(argv[1:], "--image")
         if not image_ref:
             refs = await self._collect_event_image_refs(event)
             image_ref = refs[0] if refs else ""
         if not image_ref:
-            yield event.plain_result("请附带一张图片，或使用 --image 指定图片路径/URL。")
+            yield self._build_error_result(event, "读取输入图片失败", "请附带一张图片，或使用 --image 指定图片路径/URL。")
             return
         token_ok, token, token_err = await self._resolve_auth_token()
         if not token_ok:
-            yield event.plain_result(f"鉴权失败：{token_err}")
+            yield self._build_error_result(event, "鉴权失败", self._brief_error(token_err, "鉴权失败，请检查 api_key/access_key。"))
             return
         image_bytes = await self._load_image_bytes_for_event(event, image_ref)
         if image_bytes is None:
-            yield event.plain_result("读取图片失败。")
+            yield self._build_error_result(event, "读取输入图片失败", "输入图片已失效或当前环境无法访问原图，请重新发送原图后再试。")
             return
         body = msgpack.packb({"req_type": tool, "image": image_bytes}, use_bin_type=True)
         ok, data, err = await self._request_bytes("POST", self._image_base() + "/ai/augment-image", token, body, "application/msgpack")
         if not ok:
-            yield event.plain_result(f"导演工具调用失败：{err}")
+            yield self._build_error_result(event, "导演工具调用失败", self._brief_error(err, "上游服务暂时不可用，请稍后再试。"))
             return
         images = self._extract_images_from_zip(data)
         if not images:
-            yield event.plain_result("导演工具调用成功，但未返回图片。")
+            yield self._build_error_result(event, "导演工具调用失败", "上游未返回图片，请稍后再试。")
             return
         for idx, item in enumerate(images, start=1):
             path = self._save_raw_image(item, "image/png", idx)
             if path:
-                yield event.image_result(path)
-                yield event.plain_result(f"导演工具 {tool} [{idx}/{len(images)}]")
+                info = self._format_card(
+                    "导演工具处理完成",
+                    [
+                        f"工具：{tool}",
+                        f"结果：第 {idx}/{len(images)} 张",
+                    ],
+                    icon="✅",
+                )
+                yield event.chain_result(
+                    [
+                        Comp.Image(file=path),
+                        *self._build_notice_components(
+                            event,
+                            info,
+                            mention_requester=self._to_bool(self._cfg("mention_requester_on_success", True), True),
+                            prepend_newline=True,
+                        ),
+                    ]
+                )
 
     @filter.command("nai编码参考图", alias={"naivibe", "nai参考图"})
     async def encode_vibe_command(self, event: AstrMessageEvent):
@@ -408,7 +425,7 @@ class Novel2ApiPlugin(Star):
         try:
             argv = shlex.split(rest) if rest else []
         except ValueError as exc:
-            yield event.plain_result(f"参数解析失败：{exc}")
+            yield self._build_error_result(event, "参数错误", f"参数解析失败：{exc}")
             return
         image_ref = self._extract_opt_value(argv, "--image")
         mask_ref = self._extract_opt_value(argv, "--mask")
@@ -418,15 +435,15 @@ class Novel2ApiPlugin(Star):
             refs = await self._collect_event_image_refs(event)
             image_ref = refs[0] if refs else ""
         if not image_ref:
-            yield event.plain_result("用法：/nai编码参考图 [--model 模型] [--info 0-10] [--mask 路径/URL]（需附带图片）")
+            yield self._build_error_result(event, "参数错误", "用法：/nai编码参考图 [--model 模型] [--info 0-10] [--mask 路径/URL]（需附带图片）")
             return
         token_ok, token, token_err = await self._resolve_auth_token()
         if not token_ok:
-            yield event.plain_result(f"鉴权失败：{token_err}")
+            yield self._build_error_result(event, "鉴权失败", self._brief_error(token_err, "鉴权失败，请检查 api_key/access_key。"))
             return
         image_bytes = await self._load_image_bytes_for_event(event, image_ref)
         if image_bytes is None:
-            yield event.plain_result("读取主图失败。")
+            yield self._build_error_result(event, "读取输入图片失败", "输入图片已失效或当前环境无法访问原图，请重新发送原图后再试。")
             return
         payload: dict[str, Any] = {
             "image": image_bytes,
@@ -436,15 +453,25 @@ class Novel2ApiPlugin(Star):
         if mask_ref:
             mask_bytes = await self._load_image_bytes_for_event(event, mask_ref)
             if mask_bytes is None:
-                yield event.plain_result("读取 mask 图片失败。")
+                yield self._build_error_result(event, "读取 mask 图片失败", "mask 图片已失效或当前环境无法访问，请重新发送后再试。")
                 return
             payload["mask"] = mask_bytes
         packed = msgpack.packb(payload, use_bin_type=True)
         ok, data, err = await self._request_bytes("POST", self._image_base() + "/ai/encode-vibe", token, packed, "application/msgpack")
         if not ok:
-            yield event.plain_result(f"参考图编码失败：{err}")
+            yield self._build_error_result(event, "参考图编码失败", self._brief_error(err, "上游服务暂时不可用，请稍后再试。"))
             return
-        yield event.plain_result("vibe_code:\n" + base64.b64encode(data).decode("ascii"))
+        yield event.chain_result(
+            self._build_notice_components(
+                event,
+                self._format_card(
+                    "参考图编码完成",
+                    [base64.b64encode(data).decode("ascii")],
+                    icon="✅",
+                ),
+                mention_requester=self._to_bool(self._cfg("mention_requester_on_success", True), True),
+            )
+        )
 
     async def _handle_generate(self, event: AstrMessageEvent, prompt: str, opts: dict[str, Any]) -> list[Any]:
         if not self._is_sender_allowed(event):
@@ -2039,7 +2066,7 @@ class Novel2ApiPlugin(Star):
     def _deny_if_not_admin(self, event: AstrMessageEvent, action: str):
         if self._is_admin_user(event):
             return None
-        return event.plain_result(f"{action} 仅管理员可用。")
+        return self._build_error_result(event, "无权限使用", f"{action} 仅管理员可用。")
 
     def _debug_enabled(self) -> bool:
         return bool(self._cfg("debug", False))
