@@ -40,8 +40,19 @@ def install_astrbot_stubs() -> None:
             self.context = context
 
     class Filter:
+        class EventMessageType:
+            ALL = 0
+            PRIVATE_MESSAGE = 1
+            GROUP_MESSAGE = 2
+
         @staticmethod
         def command(*args, **kwargs):
+            def deco(func):
+                return func
+            return deco
+
+        @staticmethod
+        def event_message_type(*args, **kwargs):
             def deco(func):
                 return func
             return deco
@@ -126,6 +137,17 @@ class PluginStabilityTests(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertEqual(len(result.images), 1)
         self.assertEqual(result.images[0].data, PNG_1X1)
+
+    def test_match_trigger_supports_multilingual_aliases(self):
+        plugin = self.make_plugin()
+
+        self.assertEqual(plugin._match_trigger("gpt生图 一只猫")[0], "generate")
+        self.assertEqual(plugin._match_trigger("GPT 繪圖 一隻貓")[0], "generate")
+        self.assertEqual(plugin._match_trigger("gpt generate image a cute cat")[0], "generate")
+        self.assertEqual(plugin._match_trigger("gpt改圖 轉成二次元")[0], "edit")
+        self.assertEqual(plugin._match_trigger("edit image make it anime")[0], "edit")
+        self.assertEqual(plugin._match_trigger("gpt 圖片幫助")[0], "help")
+        self.assertEqual(plugin._match_trigger("chatgpt status")[0], "status")
 
     def test_sse_upstream_stream_error_is_readable_without_retry_copy(self):
         plugin = self.make_plugin()

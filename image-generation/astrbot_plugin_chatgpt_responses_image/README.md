@@ -28,6 +28,15 @@
 - `gpt图状态`
 - `gpt图帮助`
 
+也支持更宽松的简体 / 繁体 / 英文前缀，例如：
+
+- `gpt 繪圖 ...`
+- `gpt 改圖 ...`
+- `gpt image ...`
+- `edit image ...`
+- `gpt help`
+- `chatgpt status`
+
 也支持 `key=value`：
 
 - `size=1024x1024`

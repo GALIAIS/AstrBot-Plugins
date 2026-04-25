@@ -90,6 +90,118 @@ class ChatGPTResponsesImagePlugin(Star):
         "output_compression",
         "input_fidelity",
     }
+    _HELP_TRIGGERS = {
+        "gpt图帮助",
+        "gpt 图帮助",
+        "gpt圖片幫助",
+        "gpt 圖片幫助",
+        "gpt help",
+        "gpt image help",
+        "gptimghelp",
+        "chatgpt图帮助",
+        "chatgpt 图帮助",
+        "chatgpt圖片幫助",
+        "chatgpt 圖片幫助",
+        "chatgpt help",
+        "chatgpt image help",
+    }
+    _STATUS_TRIGGERS = {
+        "gpt图状态",
+        "gpt 图状态",
+        "gpt圖片狀態",
+        "gpt 圖片狀態",
+        "gpt状态",
+        "gpt 状态",
+        "gpt狀態",
+        "gpt 狀態",
+        "gpt status",
+        "gpt image status",
+        "gptimgstatus",
+        "chatgpt图状态",
+        "chatgpt 图状态",
+        "chatgpt圖片狀態",
+        "chatgpt 圖片狀態",
+        "chatgpt status",
+        "chatgpt image status",
+    }
+    _GENERATE_TRIGGERS = {
+        "gpt生图",
+        "gpt 生图",
+        "gpt生成图片",
+        "gpt 生成图片",
+        "gpt生成圖片",
+        "gpt 生成圖片",
+        "gpt画图",
+        "gpt 画图",
+        "gpt畫圖",
+        "gpt 畫圖",
+        "gpt绘图",
+        "gpt 绘图",
+        "gpt繪圖",
+        "gpt 繪圖",
+        "chatgpt生图",
+        "chatgpt 生图",
+        "chatgpt生成图片",
+        "chatgpt 生成图片",
+        "chatgpt生成圖片",
+        "chatgpt 生成圖片",
+        "chatgpt画图",
+        "chatgpt 画图",
+        "chatgpt畫圖",
+        "chatgpt 畫圖",
+        "chatgpt绘图",
+        "chatgpt 绘图",
+        "chatgpt繪圖",
+        "chatgpt 繪圖",
+        "gptimg",
+        "gptimage",
+        "gpt image",
+        "gpt draw",
+        "gpt create image",
+        "gpt generate image",
+        "chatgpt image",
+        "chatgpt draw",
+        "generate image",
+        "create image",
+        "draw image",
+    }
+    _EDIT_TRIGGERS = {
+        "gpt改图",
+        "gpt 改图",
+        "gpt改圖",
+        "gpt 改圖",
+        "gpt图生图",
+        "gpt 图生图",
+        "gpt圖生圖",
+        "gpt 圖生圖",
+        "gpt编辑图片",
+        "gpt 编辑图片",
+        "gpt編輯圖片",
+        "gpt 編輯圖片",
+        "gpt编辑图像",
+        "gpt 编辑图像",
+        "gpt編輯圖像",
+        "gpt 編輯圖像",
+        "chatgpt改图",
+        "chatgpt 改图",
+        "chatgpt改圖",
+        "chatgpt 改圖",
+        "chatgpt图生图",
+        "chatgpt 图生图",
+        "chatgpt圖生圖",
+        "chatgpt 圖生圖",
+        "chatgpt编辑图片",
+        "chatgpt 编辑图片",
+        "chatgpt編輯圖片",
+        "chatgpt 編輯圖片",
+        "gpti2i",
+        "gpt edit",
+        "gpt edit image",
+        "gpt image edit",
+        "edit image",
+        "image edit",
+        "img2img",
+    }
 
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
         super().__init__(context)
@@ -108,57 +220,107 @@ class ChatGPTResponsesImagePlugin(Star):
     async def terminate(self):
         logger.info("astrbot_plugin_chatgpt_responses_image 已停止")
 
-    @filter.command("gpt图帮助", alias={"gptimghelp", "chatgpt图帮助"})
+    @filter.event_message_type(filter.EventMessageType.ALL)
+    async def on_message_dispatch(self, event: AstrMessageEvent):
+        matched = self._match_trigger(event.message_str)
+        if not matched:
+            return
+        action, rest = matched
+        event.stop_event()
+        async for result in self._dispatch_action(event, action, rest):
+            yield result
+
+    @filter.command("gpt图帮助", alias={"gptimghelp", "chatgpt图帮助", "gpt help", "gpt image help", "chatgpt help"})
     async def help_command(self, event: AstrMessageEvent):
         event.stop_event()
-        yield event.plain_result(self._help_text())
+        async for result in self._dispatch_action(event, "help", self._rest_after_command(event.message_str, "help")):
+            yield result
 
-    @filter.command("gpt图状态", alias={"gptimgstatus"})
+    @filter.command("gpt图状态", alias={"gptimgstatus", "gpt status", "gpt image status", "chatgpt status"})
     async def status_command(self, event: AstrMessageEvent):
         event.stop_event()
-        async with self._queue_state_lock:
-            queue_wait = max(0, self._queue_waiting)
-            queue_running = max(0, self._queue_running)
+        async for result in self._dispatch_action(event, "status", self._rest_after_command(event.message_str, "status")):
+            yield result
 
-        allow_partial = "开启" if self._to_bool(self._cfg("allow_partial_fallback", True), True) else "关闭"
-        yield event.plain_result(
-            self._format_card(
-                "插件状态",
-                [
-                    f"队列：待处理 {queue_wait} 个 · 进行中 {queue_running} 个",
-                    f"限制：并发 {self._max_concurrency} · 排队 {self._max_queue_waiting}",
-                    f"默认：{self._cfg('default_model', 'gpt-5.4')} · {self._display_size(str(self._cfg('default_size', '1024x1024')))} · {self._display_output_format(str(self._cfg('default_output_format', 'png')))}",
-                    f"协议：Responses SSE · partial 兜底 {allow_partial}",
-                ],
-                icon="🧩",
-            )
-        )
-
-    @filter.command("gpt生图", alias={"gpt画图", "chatgpt生图"})
+    @filter.command("gpt生图", alias={"gpt画图", "chatgpt生图", "gptimg", "gptimage", "gpt image", "gpt draw", "chatgpt image"})
     async def generate_command(self, event: AstrMessageEvent):
         event.stop_event()
-        prompt, opts, err = self._parse_args(self._rest_after_command(event.message_str))
-        if err:
-            yield event.plain_result(self._format_error_card("参数解析失败", err))
-            return
-        if not prompt:
-            yield event.plain_result(self._format_usage_card("generate"))
-            return
-        async for result in self._handle_request(event, prompt, opts, action="generate"):
+        async for result in self._dispatch_action(event, "generate", self._rest_after_command(event.message_str, "generate")):
             yield result
 
-    @filter.command("gpt改图", alias={"gpti2i", "chatgpt改图"})
+    @filter.command("gpt改图", alias={"gpti2i", "chatgpt改图", "gpt edit", "gpt edit image", "edit image", "img2img"})
     async def edit_command(self, event: AstrMessageEvent):
         event.stop_event()
-        prompt, opts, err = self._parse_args(self._rest_after_command(event.message_str))
+        async for result in self._dispatch_action(event, "edit", self._rest_after_command(event.message_str, "edit")):
+            yield result
+
+    async def _dispatch_action(self, event: AstrMessageEvent, action: str, rest: str):
+        if action == "help":
+            yield event.plain_result(self._help_text())
+            return
+        if action == "status":
+            async with self._queue_state_lock:
+                queue_wait = max(0, self._queue_waiting)
+                queue_running = max(0, self._queue_running)
+            allow_partial = "开启" if self._to_bool(self._cfg("allow_partial_fallback", True), True) else "关闭"
+            yield event.plain_result(
+                self._format_card(
+                    "插件状态",
+                    [
+                        f"队列：待处理 {queue_wait} 个 · 进行中 {queue_running} 个",
+                        f"限制：并发 {self._max_concurrency} · 排队 {self._max_queue_waiting}",
+                        f"默认：{self._cfg('default_model', 'gpt-5.4')} · {self._display_size(str(self._cfg('default_size', '1024x1024')))} · {self._display_output_format(str(self._cfg('default_output_format', 'png')))}",
+                        f"协议：Responses SSE · partial 兜底 {allow_partial}",
+                    ],
+                    icon="🧩",
+                )
+            )
+            return
+        prompt, opts, err = self._parse_args(rest)
         if err:
             yield event.plain_result(self._format_error_card("参数解析失败", err))
             return
         if not prompt:
-            yield event.plain_result(self._format_usage_card("edit"))
+            yield event.plain_result(self._format_usage_card(action))
             return
-        async for result in self._handle_request(event, prompt, opts, action="edit"):
+        async for result in self._handle_request(event, prompt, opts, action=action):
             yield result
+
+    def _match_trigger(self, message: str) -> tuple[str, str] | None:
+        text = self._normalize_trigger_text(message)
+        for action, triggers in (
+            ("help", self._HELP_TRIGGERS),
+            ("status", self._STATUS_TRIGGERS),
+            ("edit", self._EDIT_TRIGGERS),
+            ("generate", self._GENERATE_TRIGGERS),
+        ):
+            matched = self._match_trigger_from_set(text, triggers)
+            if matched is not None:
+                return action, matched
+        return None
+
+    def _match_trigger_from_set(self, text: str, triggers: set[str]) -> str | None:
+        for trigger in sorted((self._normalize_trigger_text(x) for x in triggers), key=len, reverse=True):
+            if not text.startswith(trigger):
+                continue
+            rest = text[len(trigger):]
+            if self._trigger_boundary_ok(trigger, rest):
+                return rest.lstrip(" \t\r\n:：,，")
+        return None
+
+    def _normalize_trigger_text(self, message: str) -> str:
+        text = str(message or "").strip()
+        text = text.replace("　", " ")
+        text = re.sub(r"\s+", " ", text)
+        text = text.lstrip("/!！.。?？,，;；:：")
+        return text.strip().lower()
+
+    def _trigger_boundary_ok(self, trigger: str, rest: str) -> bool:
+        if not rest:
+            return True
+        if any(ord(ch) > 127 for ch in trigger):
+            return True
+        return rest[:1] in {" ", "\t", "\r", "\n", ":", "：", ",", "，", "-", "_", "/"}
 
     async def _handle_request(
         self,
@@ -1848,7 +2010,10 @@ class ChatGPTResponsesImagePlugin(Star):
             return "PNG"
         return text.upper() or "PNG"
 
-    def _rest_after_command(self, message: str) -> str:
+    def _rest_after_command(self, message: str, expected_action: str | None = None) -> str:
+        matched = self._match_trigger(message)
+        if matched and (expected_action is None or matched[0] == expected_action):
+            return matched[1]
         text = (message or "").strip()
         parts = text.split(maxsplit=1)
         return parts[1] if len(parts) > 1 else ""
@@ -2174,6 +2339,7 @@ class ChatGPTResponsesImagePlugin(Star):
                 "gpt改图 <prompt>  图生图 / 多图改图",
                 "gpt图状态  查看默认参数和队列状态",
                 "gpt图帮助  查看这份帮助",
+                "也支持简繁英触发：gpt 繪圖 / gpt 改圖 / gpt image / edit image / gpt help / chatgpt status",
                 f"支持参数：{self._supported_options_text()}",
                 f"已移除参数：{self._removed_options_text()}",
                 "图生图支持：直接附图、回复图片、重复 --image、多图 image=a.png,b.png",
