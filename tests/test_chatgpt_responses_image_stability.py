@@ -411,6 +411,16 @@ class PluginStabilityTests(unittest.TestCase):
         self.assertIn("⏳ 已进入生图队列", samples[1])
         self.assertIn("📘 ChatGPT Images 指令帮助", samples[-1])
 
+    def test_queue_card_uses_concurrent_copy_when_parallel_enabled(self):
+        plugin = self.make_plugin({"max_concurrency": 3})
+
+        text = plugin._format_queue_card(2, concurrent=True)
+
+        self.assertIn("⏳ 已进入并发生图队列", text)
+        self.assertIn("当前前置任务 2 个", text)
+        self.assertIn("最大 3 个同时进行", text)
+        self.assertNotIn("按顺序执行", text)
+
     def test_accepted_card_is_concise_and_plain(self):
         plugin = self.make_plugin()
 

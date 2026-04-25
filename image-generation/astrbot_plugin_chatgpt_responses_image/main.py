@@ -416,7 +416,7 @@ class ChatGPTResponsesImagePlugin(Star):
             )
         )
         if wait_num > 0:
-            yield event.plain_result(self._format_queue_card(wait_num))
+            yield event.plain_result(self._format_queue_card(wait_num, concurrent=self._max_concurrency > 1))
 
         task = asyncio.create_task(
             self._run_generation_task(
@@ -2012,7 +2012,16 @@ class ChatGPTResponsesImagePlugin(Star):
     def _format_error_card(self, title: str, detail: str) -> str:
         return self._format_card(title, [detail], icon="❌")
 
-    def _format_queue_card(self, wait_num: int) -> str:
+    def _format_queue_card(self, wait_num: int, concurrent: bool = False) -> str:
+        if concurrent:
+            return self._format_card(
+                "已进入并发生图队列",
+                [
+                    f"当前前置任务 {wait_num} 个",
+                    f"插件会按并发模式执行（最大 {self._max_concurrency} 个同时进行），完成后只发送最终成图",
+                ],
+                icon="⏳",
+            )
         return self._format_card(
             "已进入生图队列",
             [
