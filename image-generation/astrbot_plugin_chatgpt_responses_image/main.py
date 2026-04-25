@@ -542,7 +542,7 @@ class ChatGPTResponsesImagePlugin(Star):
         info: str,
     ) -> None:
         chain: list[Any] = [Comp.Image(file=path) for path in saved_paths]
-        chain.append(Comp.Plain(info))
+        chain.extend(self._build_success_info_components(event, info))
         await self._send_message_result(event, event.chain_result(chain))
 
     async def _send_generation_result_separately(
@@ -553,7 +553,46 @@ class ChatGPTResponsesImagePlugin(Star):
     ) -> None:
         for path in saved_paths:
             await self._send_message_result(event, event.chain_result([Comp.Image(file=path)]))
-        await self._send_message_result(event, event.plain_result(info))
+        await self._send_message_result(event, event.chain_result(self._build_success_info_components(event, info)))
+
+    def _build_success_info_components(self, event: AstrMessageEvent, info: str) -> list[Any]:
+        components: list[Any] = []
+        sender_id = self._event_sender_id(event)
+        first_line, rest = self._split_first_line(info)
+        if first_line:
+            components.append(Comp.Plain(first_line))
+        if sender_id and hasattr(Comp, "At"):
+            components.append(Comp.Plain("\n"))
+            components.append(Comp.At(qq=sender_id))
+        remaining_text = rest if rest else ""
+        if sender_id and remaining_text:
+            remaining_text = "\n" + remaining_text
+        if remaining_text:
+            components.append(Comp.Plain(remaining_text))
+        return components or [Comp.Plain(info)]
+
+    def _event_sender_id(self, event: AstrMessageEvent) -> str:
+        getter = getattr(event, "get_sender_id", None)
+        if callable(getter):
+            try:
+                value = getter()
+                if value is not None:
+                    return str(value).strip()
+            except Exception:
+                pass
+        message_obj = getattr(event, "message_obj", None)
+        sender = getattr(message_obj, "sender", None)
+        user_id = getattr(sender, "user_id", None)
+        if user_id is not None:
+            return str(user_id).strip()
+        return ""
+
+    def _split_first_line(self, text: str) -> tuple[str, str]:
+        value = str(text or "")
+        if "\n" not in value:
+            return value, ""
+        first, rest = value.split("\n", 1)
+        return first, rest
 
     def _resolve_request_options(self, opts: dict[str, Any]) -> tuple[dict[str, Any], str]:
         model = str(opts.get("model") or self._cfg("default_model", "gpt-5.4")).strip() or "gpt-5.4"

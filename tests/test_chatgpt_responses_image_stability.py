@@ -28,6 +28,10 @@ def install_astrbot_stubs() -> None:
         def __init__(self, file: str = ""):
             self.file = file
 
+    class At:
+        def __init__(self, qq=None):
+            self.qq = qq
+
     class AstrMessageEvent:
         pass
 
@@ -72,6 +76,7 @@ def install_astrbot_stubs() -> None:
 
     components.Plain = Plain
     components.Image = Image
+    components.At = At
     api.AstrBotConfig = dict
     api.logger = Logger()
     event_mod.AstrMessageEvent = AstrMessageEvent
@@ -437,6 +442,23 @@ class PluginStabilityTests(unittest.TestCase):
         self.assertNotIn("├", text)
         self.assertNotIn("╰", text)
 
+    def test_success_info_chain_mentions_request_sender_before_model_lines(self):
+        plugin = self.make_plugin()
+
+        class Event:
+            def get_sender_id(self):
+                return "123456"
+
+        components = plugin._build_success_info_components(
+            Event(),
+            "✅ 图像生成完成\n模型：gpt-5.4 → gpt-image-2\n模式：文生图",
+        )
+
+        self.assertEqual(components[0].text, "✅ 图像生成完成")
+        self.assertEqual(components[1].text, "\n")
+        self.assertEqual(components[2].qq, "123456")
+        self.assertEqual(components[3].text, "\n模型：gpt-5.4 → gpt-image-2\n模式：文生图")
+
     def test_handle_request_yields_accepted_before_api_call(self):
         plugin = self.make_plugin({"api_key": "test", "max_concurrency": 1})
         order = []
@@ -583,7 +605,9 @@ class PluginStabilityTests(unittest.TestCase):
         self.assertEqual(err, "")
         self.assertEqual(sent[0][0], "chain")
         self.assertEqual(len(sent[0][1]), 1)
-        self.assertEqual(sent[1], ("plain", "done"))
+        self.assertEqual(sent[1][0], "chain")
+        self.assertEqual(len(sent[1][1]), 1)
+        self.assertEqual(sent[1][1][0].text, "done")
 
     def test_platform_send_failure_is_summarized_cleanly(self):
         plugin = self.make_plugin()
