@@ -202,6 +202,10 @@ class ChatGPTResponsesImagePlugin(Star):
         "image edit",
         "img2img",
     }
+    _COMMAND_HELP_TRIGGERS = {"gpt图帮助", "gptimghelp", "chatgpt图帮助", "gpt help", "gpt image help", "chatgpt help"}
+    _COMMAND_STATUS_TRIGGERS = {"gpt图状态", "gptimgstatus", "gpt status", "gpt image status", "chatgpt status"}
+    _COMMAND_GENERATE_TRIGGERS = {"gpt生图", "gpt画图", "chatgpt生图", "gptimg", "gptimage", "gpt image", "gpt draw", "chatgpt image"}
+    _COMMAND_EDIT_TRIGGERS = {"gpt改图", "gpti2i", "chatgpt改图", "gpt edit", "gpt edit image", "edit image", "img2img"}
 
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
         super().__init__(context)
@@ -222,6 +226,8 @@ class ChatGPTResponsesImagePlugin(Star):
 
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def on_message_dispatch(self, event: AstrMessageEvent):
+        if self._match_registered_command(event.message_str) is not None:
+            return
         matched = self._match_trigger(event.message_str)
         if not matched:
             return
@@ -293,6 +299,19 @@ class ChatGPTResponsesImagePlugin(Star):
             ("status", self._STATUS_TRIGGERS),
             ("edit", self._EDIT_TRIGGERS),
             ("generate", self._GENERATE_TRIGGERS),
+        ):
+            matched = self._match_trigger_from_set(text, triggers)
+            if matched is not None:
+                return action, matched
+        return None
+
+    def _match_registered_command(self, message: str) -> tuple[str, str] | None:
+        text = self._normalize_trigger_text(message)
+        for action, triggers in (
+            ("help", self._COMMAND_HELP_TRIGGERS),
+            ("status", self._COMMAND_STATUS_TRIGGERS),
+            ("edit", self._COMMAND_EDIT_TRIGGERS),
+            ("generate", self._COMMAND_GENERATE_TRIGGERS),
         ):
             matched = self._match_trigger_from_set(text, triggers)
             if matched is not None:

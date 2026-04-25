@@ -149,6 +149,14 @@ class PluginStabilityTests(unittest.TestCase):
         self.assertEqual(plugin._match_trigger("gpt 圖片幫助")[0], "help")
         self.assertEqual(plugin._match_trigger("chatgpt status")[0], "status")
 
+    def test_registered_command_match_separates_exact_command_from_loose_dispatch(self):
+        plugin = self.make_plugin()
+
+        self.assertEqual(plugin._match_registered_command("gpt图状态")[0], "status")
+        self.assertEqual(plugin._match_registered_command("chatgpt status")[0], "status")
+        self.assertIsNone(plugin._match_registered_command("gpt 圖片狀態"))
+        self.assertIsNone(plugin._match_registered_command("gpt 生成圖片 一隻貓"))
+
     def test_sse_upstream_stream_error_is_readable_without_retry_copy(self):
         plugin = self.make_plugin()
         sse = "data: " + json.dumps({
