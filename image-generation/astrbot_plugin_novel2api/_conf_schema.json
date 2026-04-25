@@ -123,6 +123,21 @@
     "type": "list",
     "default": []
   },
+  "mention_requester_on_success": {
+    "description": "成功回传时是否 @ 发起本次生图的用户",
+    "type": "bool",
+    "default": true
+  },
+  "mention_requester_on_error": {
+    "description": "错误回传时是否 @ 发起本次生图的用户",
+    "type": "bool",
+    "default": true
+  },
+  "max_queue_waiting": {
+    "description": "最大排队等待任务数（超过直接拒绝）",
+    "type": "int",
+    "default": 20
+  },
   "free_max_resolution": {
     "description": "非管理员不消耗路径的分辨率上限（宽*高）",
     "type": "int",
@@ -144,14 +159,34 @@
     "default": 4194304
   },
   "whitelist_user_ids": {
-    "description": "白名单用户 ID 列表（留空=不启用）",
+    "description": "白名单用户 ID 列表（留空=不启用，兼容旧配置名）",
+    "type": "list",
+    "default": []
+  },
+  "user_whitelist": {
+    "description": "用户白名单（sender_id/QQ号）。非空时，仅白名单内用户可使用生图",
     "type": "list",
     "default": []
   },
   "blacklist_user_ids": {
-    "description": "黑名单用户 ID 列表",
+    "description": "黑名单用户 ID 列表（兼容旧配置名）",
     "type": "list",
     "default": []
+  },
+  "user_blacklist": {
+    "description": "用户黑名单（sender_id/QQ号）。命中后静默忽略生图指令",
+    "type": "list",
+    "default": []
+  },
+  "rate_limit_window_seconds": {
+    "description": "频率限制时间窗口（秒）。大于 0 且 max_requests > 0 时生效",
+    "type": "float",
+    "default": 0.0
+  },
+  "rate_limit_max_requests": {
+    "description": "频率限制窗口内允许的最大请求数",
+    "type": "int",
+    "default": 0
   },
   "quota_enabled": {
     "description": "是否启用额度系统（非管理员）",

@@ -65,6 +65,8 @@ class Novel2ApiPlugin(Star):
         self._queue_condition = asyncio.Condition()
         self._queue_next_ticket = 0
         self._queue_serving_ticket = 0
+        self._sender_rate_limit_hits: dict[str, list[float]] = {}
+        self._rate_limit_lock = asyncio.Lock()
         self._state: dict[str, Any] = {
             "auto_mode_chats": {},
             "user_quota": {},
@@ -103,8 +105,23 @@ class Novel2ApiPlugin(Star):
         quota = self._get_user_quota(uid)
         queue_wait = max(0, self._queue_next_ticket - self._queue_serving_ticket)
         free_mode = bool(self._cfg("opus_free_mode", True))
+        max_queue_waiting = max(0, int(self._cfg("max_queue_waiting", 20)))
+        rate_limit_desc = "关闭"
+        rate_limit_max = max(0, int(self._cfg("rate_limit_max_requests", 0)))
+        rate_limit_window = max(0.0, float(self._cfg("rate_limit_window_seconds", 0)))
+        if rate_limit_max > 0 and rate_limit_window > 0:
+            rate_limit_desc = f"{rate_limit_window:g} 秒内最多 {rate_limit_max} 次"
         yield event.plain_result(
-            f"插件状态：\n- 队列待处理：{queue_wait}\n- 你的额度：{quota}\n- 免费模式：{'开启' if free_mode else '关闭'}\n- 调试日志：{'开启' if self._debug_enabled() else '关闭'}"
+            self._format_card(
+                "插件状态",
+                [
+                    f"队列：待处理 {queue_wait} 个 · 最大等待 {max_queue_waiting}",
+                    f"额度：{quota} · 免费模式：{'开启' if free_mode else '关闭'}",
+                    f"频率限制：{rate_limit_desc}",
+                    f"调试日志：{'开启' if self._debug_enabled() else '关闭'}",
+                ],
+                icon="🧩",
+            )
         )
 
     @filter.command("nai调试", alias={"naidebug"})
@@ -430,15 +447,16 @@ class Novel2ApiPlugin(Star):
         yield event.plain_result("vibe_code:\n" + base64.b64encode(data).decode("ascii"))
 
     async def _handle_generate(self, event: AstrMessageEvent, prompt: str, opts: dict[str, Any]) -> list[Any]:
-        deny = self._deny_by_lists(event)
-        if deny is not None:
-            return [deny]
+        if not self._is_sender_allowed(event):
+            return []
+        if not await self._check_sender_rate_limit(event):
+            return []
         raw_request = opts.get("raw_request") or {}
         if not prompt and not raw_request:
             return [event.plain_result("用法：/nai生图 <prompt> [--size portrait|landscape|square] [--model xxx] [--negative xxx] [--json '{}'] [--raw '{}']")]
         token_ok, token, token_err = await self._resolve_auth_token()
         if not token_ok:
-            return [event.plain_result(f"鉴权失败：{token_err}")]
+            return [self._build_error_result(event, "鉴权失败", self._brief_error(token_err, "鉴权失败，请检查 api_key/access_key。"))]
         image_refs = await self._collect_event_image_refs(event)
         if isinstance(opts.get("image_ref"), str) and opts["image_ref"]:
             image_refs.insert(0, opts["image_ref"])
@@ -448,19 +466,19 @@ class Novel2ApiPlugin(Star):
         is_admin = self._is_admin_user(event)
         size_pair, size_err = self._resolve_size(opts, allow_custom=is_admin)
         if size_pair is None:
-            return [event.plain_result(size_err or "尺寸不合法。")]
+            return [self._build_error_result(event, "参数错误", size_err or "尺寸不合法。")]
         width, height = size_pair
 
         action = str(opts.get("action", "")).strip().lower() or ("img2img" if image_refs else str(self._cfg("default_action", "generate")).strip().lower())
         if action in {"img2img", "inpaint", "infill"} and not image_refs:
-            return [event.plain_result("未检测到可用输入图片。请直接发送图片，或使用“回复图片+指令”再试。")]
+            return [self._build_error_result(event, "读取输入图片失败", "未检测到可用输入图片。请直接发送图片，或使用“回复图片+指令”再试。")]
         models = await self._get_image_models(force=False)
         model = str(opts.get("model") or self._cfg("default_model", "nai-diffusion-4-5-full")).strip()
         if models and model not in set(models):
             model = models[0]
         sampler, sampler_err = self._normalize_sampler(str(opts.get("sampler") or self._cfg("default_sampler", "k_euler_ancestral")).strip())
         if sampler_err:
-            return [event.plain_result(sampler_err)]
+            return [self._build_error_result(event, "参数错误", sampler_err)]
         input_image_bytes: bytes | None = None
         if image_refs:
             input_image_bytes = None
@@ -472,7 +490,7 @@ class Novel2ApiPlugin(Star):
                     break
             if input_image_bytes is None:
                 self._debug("image_ref_all_failed")
-                return [event.plain_result("读取输入图片失败（图片可能是 file_id 未解析或引用已失效），请重新发送原图后再试。")]
+                return [self._build_error_result(event, "读取输入图片失败", "输入图片已失效或当前环境无法访问原图，请重新发送原图后再试。")]
             src_size = self._image_size_from_bytes(input_image_bytes)
             if src_size is not None:
                 width, height = self._nearest_fixed_size(src_size[0], src_size[1])
@@ -482,7 +500,7 @@ class Novel2ApiPlugin(Star):
                     input_image_bytes = resized
             else:
                 self._debug("source_image_decode_failed")
-                return [event.plain_result("读取到的引用内容不是可识别图片，请直接发送图片原图后重试。")]
+                return [self._build_error_result(event, "读取输入图片失败", "读取到的内容不是可识别图片，请直接发送图片原图后重试。")]
 
         requested_count = max(1, self._to_int_or_default(opts.get("n_samples"), int(self._cfg("default_n_samples", 1))))
         prompt = self._apply_preset_if_needed(prompt, opts)
@@ -497,20 +515,20 @@ class Novel2ApiPlugin(Star):
         if not is_admin:
             # 非管理员仅允许低消耗路径（文生图、单张、非高分辨率）
             if image_refs:
-                return [event.plain_result("当前用户仅可使用不消耗路径：不支持图生图/附图生图。")]
+                return [self._build_error_result(event, "无权限使用", "当前用户仅可使用不消耗路径：不支持图生图/附图生图。")]
             if str(opts.get("mask_ref", "")).strip():
-                return [event.plain_result("当前用户仅可使用不消耗路径：不支持 mask。")]
+                return [self._build_error_result(event, "无权限使用", "当前用户仅可使用不消耗路径：不支持 mask。")]
             if action != "generate":
-                return [event.plain_result("当前用户仅可使用不消耗路径：仅支持 action=generate。")]
+                return [self._build_error_result(event, "无权限使用", "当前用户仅可使用不消耗路径：仅支持 action=generate。")]
             if requested_count != 1:
-                return [event.plain_result("当前用户仅可使用不消耗路径：每次仅支持生成 1 张。")]
+                return [self._build_error_result(event, "无权限使用", "当前用户仅可使用不消耗路径：每次仅支持生成 1 张。")]
             max_res = int(self._cfg("free_max_resolution", 1048576))
             if width * height > max_res:
-                return [event.plain_result(f"当前用户仅可使用不消耗路径：分辨率需 <= {max_res} 像素。")]
+                return [self._build_error_result(event, "无权限使用", f"当前用户仅可使用不消耗路径：分辨率需 <= {max_res} 像素。")]
             if bool(self._cfg("quota_enabled", True)):
                 ok_quota, qmsg = self._consume_quota(str(event.get_sender_id()), requested_count)
                 if not ok_quota:
-                    return [event.plain_result(qmsg)]
+                    return [self._build_error_result(event, "额度不足", qmsg)]
         payload = self._build_generate_payload(
             prompt=prompt,
             negative_prompt=str(opts.get("negative_prompt") or self._cfg("default_negative_prompt", "")).strip(),
@@ -529,23 +547,26 @@ class Novel2ApiPlugin(Star):
         files: dict[str, bytes] = {}
         if image_refs:
             if input_image_bytes is None:
-                return [event.plain_result("读取输入图片失败。")]
+                return [self._build_error_result(event, "读取输入图片失败", "输入图片下载失败或链接已失效，请重新发送原图后再试。")]
             files["image"] = input_image_bytes
             payload.setdefault("parameters", {})["image"] = "image"
         mask_ref = str(opts.get("mask_ref", "")).strip()
         if mask_ref:
             mask_bytes = await self._load_image_bytes_for_event(event, mask_ref)
             if mask_bytes is None:
-                return [event.plain_result("读取 mask 图片失败。")]
+                return [self._build_error_result(event, "读取 mask 图片失败", "mask 图片已失效或当前环境无法访问，请重新发送后再试。")]
             files["mask"] = mask_bytes
             payload.setdefault("parameters", {})["mask"] = "mask"
 
         t0 = time.perf_counter()
         ticket, wait_num = await self._acquire_queue_ticket()
+        if ticket < 0:
+            max_queue_waiting = max(0, int(self._cfg("max_queue_waiting", 20)))
+            return [self._build_error_result(event, "队列已满", f"当前最多允许等待 {max_queue_waiting} 个任务，请稍后再试。")]
         try:
             result: list[Any] = []
             if wait_num > 0:
-                result.append(event.plain_result(f"已进入生图队列，前方 {wait_num} 个任务。"))
+                result.append(event.plain_result(self._format_queue_card(wait_num)))
 
             for idx in range(1, requested_count + 1):
                 ok, events, err = await self._request_image_stream(token, payload, files)
@@ -559,34 +580,46 @@ class Novel2ApiPlugin(Star):
                             model = retry_model
                 if not ok:
                     self._debug(f"generate_failed: model={model} action={payload.get('action')} size={width}x{height} err={err}")
-                    return [event.plain_result(f"生图失败：{err}\n上下文：model={model}, action={payload.get('action')}, size={width}x{height}")]
+                    return [self._build_error_result(event, "生图失败", self._brief_error(err, "上游服务暂时不可用，请稍后再试。"))]
 
                 image_raw = self._pick_single_image_from_events(events)
                 if not image_raw:
-                    return [event.plain_result(f"生图失败：{self._collect_stream_error(events) or '未返回图片'}")]
+                    return [self._build_error_result(event, "生图失败", self._brief_error(self._collect_stream_error(events), "上游未返回图片，请稍后再试。"))]
 
                 path = self._save_raw_image(image_raw, "image/png", idx)
                 if path:
                     p = payload.get("parameters", {}) if isinstance(payload.get("parameters"), dict) else {}
-                    extra_parts: list[str] = []
                     sampler_val = p.get("sampler")
-                    if sampler_val:
-                        extra_parts.append(f"sampler={sampler_val}")
                     seed_val = p.get("seed")
-                    if seed_val is not None:
-                        extra_parts.append(f"seed={seed_val}")
                     strength_val = p.get("strength")
-                    if strength_val is not None:
-                        extra_parts.append(f"strength={strength_val}")
                     noise_val = p.get("noise")
-                    if noise_val is not None:
-                        extra_parts.append(f"noise={noise_val}")
-                    extra = (", " + ", ".join(extra_parts)) if extra_parts else ""
-                    info = (
-                        f"✅ 生图完成 [{idx}/{requested_count}] | model={model} | action={payload.get('action')}\n"
-                        f"参数：{width}x{height}, steps={p.get('steps')}, scale={p.get('scale')}{extra}, n=1, 耗时={time.perf_counter()-t0:.2f}s"
+                    info = self._format_success_card(
+                        model=model,
+                        action=str(payload.get("action") or "generate"),
+                        width=width,
+                        height=height,
+                        steps=p.get("steps"),
+                        scale=p.get("scale"),
+                        requested_count=requested_count,
+                        sampler=sampler_val,
+                        seed=seed_val,
+                        strength=strength_val,
+                        noise=noise_val,
+                        elapsed=time.perf_counter() - t0,
                     )
-                    result.append(event.chain_result([Comp.Image(file=path), Comp.Plain(info)]))
+                    result.append(
+                        event.chain_result(
+                            [
+                                Comp.Image(file=path),
+                                *self._build_notice_components(
+                                    event,
+                                    info,
+                                    mention_requester=self._to_bool(self._cfg("mention_requester_on_success", True), True),
+                                    prepend_newline=True,
+                                ),
+                            ]
+                        )
+                    )
             return result
         finally:
             await self._release_queue_ticket()
@@ -713,19 +746,73 @@ class Novel2ApiPlugin(Star):
         low = text.lower()
         return any(str(w).strip().lower() in low for w in words if str(w).strip())
 
-    def _deny_by_lists(self, event: AstrMessageEvent):
-        uid = str(event.get_sender_id())
-        bl = self._cfg("blacklist_user_ids", [])
-        wl = self._cfg("whitelist_user_ids", [])
-        if isinstance(bl, list):
-            s = {str(x).strip() for x in bl if str(x).strip()}
-            if uid in s:
-                return event.plain_result("你在黑名单中，无法使用绘图功能。")
-        if isinstance(wl, list) and wl:
-            s = {str(x).strip() for x in wl if str(x).strip()}
-            if uid not in s and (not self._is_admin_user(event)):
-                return event.plain_result("当前会话启用了白名单，你暂无权限使用。")
-        return None
+    def _event_sender_id(self, event: AstrMessageEvent) -> str:
+        getter = getattr(event, "get_sender_id", None)
+        if callable(getter):
+            try:
+                value = getter()
+                if value is not None:
+                    return str(value).strip()
+            except Exception:
+                pass
+        message_obj = getattr(event, "message_obj", None)
+        sender = getattr(message_obj, "sender", None)
+        user_id = getattr(sender, "user_id", None)
+        if user_id is not None:
+            return str(user_id).strip()
+        return ""
+
+    def _normalize_id_list(self, value: Any) -> set[str]:
+        items: list[str] = []
+        if isinstance(value, str):
+            items = [x.strip() for x in re.split(r"[\s,，;；]+", value) if x.strip()]
+        elif isinstance(value, list):
+            items = [str(x).strip() for x in value if str(x).strip()]
+        return set(items)
+
+    def _cfg_id_list(self, *keys: str) -> set[str]:
+        items: set[str] = set()
+        for key in keys:
+            items.update(self._normalize_id_list(self._cfg(key, [])))
+        return items
+
+    def _is_sender_allowed(self, event: AstrMessageEvent) -> bool:
+        uid = self._event_sender_id(event)
+        if not uid:
+            return True
+        if self._is_admin_user(event):
+            return True
+        if uid in self._cfg_id_list("user_blacklist", "blacklist_user_ids"):
+            return False
+        whitelist = self._cfg_id_list("user_whitelist", "whitelist_user_ids")
+        if whitelist and uid not in whitelist:
+            return False
+        return True
+
+    async def _check_sender_rate_limit(self, event: AstrMessageEvent) -> bool:
+        uid = self._event_sender_id(event)
+        if not uid:
+            return True
+        if self._is_admin_user(event):
+            return True
+        max_requests = max(0, int(self._cfg("rate_limit_max_requests", 0)))
+        window_seconds = max(0.0, float(self._cfg("rate_limit_window_seconds", 0)))
+        if max_requests <= 0 or window_seconds <= 0:
+            return True
+        now = time.monotonic()
+        cutoff = now - window_seconds
+        async with self._rate_limit_lock:
+            hits = [ts for ts in self._sender_rate_limit_hits.get(uid, []) if ts > cutoff]
+            if len(hits) >= max_requests:
+                self._sender_rate_limit_hits[uid] = hits
+                return False
+            hits.append(now)
+            self._sender_rate_limit_hits[uid] = hits
+            stale = [key for key, values in self._sender_rate_limit_hits.items() if not values or values[-1] <= cutoff]
+            for key in stale:
+                if key != uid:
+                    self._sender_rate_limit_hits.pop(key, None)
+        return True
 
     def _get_user_quota(self, uid: str) -> int:
         uq = self._state.setdefault("user_quota", {})
@@ -753,6 +840,102 @@ class Novel2ApiPlugin(Star):
         row["quota"] = q - cost
         self._save_state()
         return True, f"本次消耗 {cost}，剩余额度 {row['quota']}。"
+
+    def _to_bool(self, value: Any, default: bool = False) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            low = value.strip().lower()
+            if low in {"1", "true", "yes", "on", "开启", "开"}:
+                return True
+            if low in {"0", "false", "no", "off", "关闭", "关"}:
+                return False
+        return default
+
+    def _format_card(self, title: str, lines: list[str], icon: str = "ℹ️") -> str:
+        clean_lines = [str(line).strip() for line in lines if str(line).strip()]
+        heading = f"{icon} {title}".strip()
+        if not clean_lines:
+            return f"{heading}\n暂无内容"
+        return "\n".join([heading, *clean_lines])
+
+    def _format_queue_card(self, wait_num: int) -> str:
+        return self._format_card(
+            "已进入生图队列",
+            [
+                f"前方还有 {wait_num} 个任务",
+                "插件会按顺序执行，完成后只发送最终成图",
+            ],
+            icon="⏳",
+        )
+
+    def _build_notice_components(
+        self,
+        event: AstrMessageEvent,
+        text: str,
+        mention_requester: bool,
+        prepend_newline: bool = False,
+    ) -> list[Any]:
+        components: list[Any] = []
+        sender_id = self._event_sender_id(event) if mention_requester else ""
+        first_line, rest = self._split_first_line(text)
+        if prepend_newline:
+            components.append(Comp.Plain("\n"))
+        if first_line:
+            components.append(Comp.Plain(first_line))
+        if sender_id and hasattr(Comp, "At"):
+            components.append(Comp.Plain("\n"))
+            components.append(Comp.At(qq=sender_id))
+        if rest:
+            components.append(Comp.Plain(f"\n{rest}"))
+        return components or [Comp.Plain(text)]
+
+    def _build_error_result(self, event: AstrMessageEvent, title: str, detail: str) -> Any:
+        text = self._format_card(title, [detail], icon="❌")
+        mention_requester = self._to_bool(self._cfg("mention_requester_on_error", True), True)
+        return event.chain_result(self._build_notice_components(event, text, mention_requester=mention_requester))
+
+    def _format_success_card(
+        self,
+        *,
+        model: str,
+        action: str,
+        width: int,
+        height: int,
+        steps: Any,
+        scale: Any,
+        requested_count: int,
+        sampler: Any,
+        seed: Any,
+        strength: Any,
+        noise: Any,
+        elapsed: float,
+    ) -> str:
+        action_name = "图生图" if str(action).lower() != "generate" else "文生图"
+        lines = [
+            "✅ 图像生成完成",
+            f"模型：{model}",
+            f"模式：{action_name} · 尺寸：{width}×{height} · 数量：{requested_count} 张",
+        ]
+        detail_parts = [f"steps={steps}", f"scale={scale}"]
+        if sampler:
+            detail_parts.append(f"sampler={sampler}")
+        if seed is not None:
+            detail_parts.append(f"seed={seed}")
+        if strength is not None:
+            detail_parts.append(f"strength={strength}")
+        if noise is not None:
+            detail_parts.append(f"noise={noise}")
+        detail_parts.append(f"耗时={elapsed:.2f}s")
+        lines.append(f"参数：{' · '.join(detail_parts)}")
+        return "\n".join(lines)
+
+    def _split_first_line(self, text: str) -> tuple[str, str]:
+        value = str(text or "")
+        if "\n" not in value:
+            return value, ""
+        first, rest = value.split("\n", 1)
+        return first, rest
 
     async def _request_image_stream(self, token: str, payload: dict[str, Any], files: dict[str, bytes]) -> tuple[bool, list[dict[str, Any]], str]:
         endpoint = self._image_base() + "/ai/generate-image-stream"
@@ -854,6 +1037,9 @@ class Novel2ApiPlugin(Star):
         async with self._queue_condition:
             ticket = self._queue_next_ticket
             wait_num = max(0, ticket - self._queue_serving_ticket)
+            max_queue_waiting = max(0, int(self._cfg("max_queue_waiting", 20)))
+            if wait_num > max_queue_waiting:
+                return -1, wait_num
             self._queue_next_ticket += 1
             while ticket != self._queue_serving_ticket:
                 await self._queue_condition.wait()
@@ -1565,24 +1751,31 @@ class Novel2ApiPlugin(Star):
     def _rest_after_command(self, message: str) -> str:
         text = (message or "").strip()
         parts = text.split(maxsplit=1)
-        return parts[1] if len(parts) > 1 else ""
+        return self._strip_leading_prompt_separators(parts[1] if len(parts) > 1 else "")
+
+    def _strip_leading_prompt_separators(self, text: str) -> str:
+        return str(text or "").lstrip(" \t\r\n:：,，.。!！?？;；、")
 
     def _brief_error(self, text: str, default: str = "服务暂不可用") -> str:
         raw = (text or "").strip()
         if not raw:
             return default
         low = raw.lower()
+        if "500" in low or "internal error" in low or "error generating image" in low:
+            return "上游服务端错误，请稍后再试。"
+        if "429" in low or "rate limit" in low or "too many requests" in low:
+            return "请求过于频繁，请稍后再试。"
         if "401" in low or "unauthorized" in low:
-            return "鉴权失败，请检查 api_key/access_key"
+            return "鉴权失败，请检查 api_key/access_key。"
         if "403" in low or "forbidden" in low:
-            return "无权限访问上游接口"
+            return "无权限访问上游接口。"
         if "404" in low or "not found" in low:
-            return "接口不存在，请检查 image_base"
+            return "接口不存在，请检查 image_base。"
         if "timeout" in low:
-            return "请求超时"
+            return "请求超时，请稍后再试。"
         if "connection" in low or "name or service not known" in low:
-            return "连接失败，请检查服务地址"
-        return raw[:320]
+            return "连接失败，请检查服务地址。"
+        return raw[:200]
 
     def _looks_like_image_url(self, value: str) -> bool:
         low = value.lower()
@@ -1650,7 +1843,7 @@ class Novel2ApiPlugin(Star):
             return default
 
     def _parse_generate_args(self, rest: str) -> tuple[str, dict[str, Any], str]:
-        text = (rest or "").strip()
+        text = self._strip_leading_prompt_separators((rest or "").strip())
         try:
             argv = shlex.split(text) if text else []
         except ValueError as exc:
@@ -1829,12 +2022,9 @@ class Novel2ApiPlugin(Star):
         )
 
     def _is_admin_user(self, event: AstrMessageEvent) -> bool:
-        admin_ids = self._cfg("admin_user_ids", [])
-        if isinstance(admin_ids, list):
-            sender = str(event.get_sender_id())
-            normalized = {str(x).strip() for x in admin_ids if str(x).strip()}
-            if sender in normalized:
-                return True
+        sender = self._event_sender_id(event)
+        if sender and sender in self._normalize_id_list(self._cfg("admin_user_ids", [])):
+            return True
         for attr in ("is_admin", "isAdmin"):
             flag = getattr(event, attr, None)
             try:
