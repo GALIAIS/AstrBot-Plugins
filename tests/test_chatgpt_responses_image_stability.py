@@ -4,10 +4,12 @@ import asyncio
 import base64
 import importlib.util
 import json
+import os
 import sys
 import types
 import unittest
 from pathlib import Path
+import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 PLUGIN_PATH = ROOT / "image-generation" / "astrbot_plugin_chatgpt_responses_image" / "main.py"
@@ -509,6 +511,32 @@ class PluginStabilityTests(unittest.TestCase):
         self.assertEqual(len(chain), 2)
         self.assertEqual(chain[0].text, "❌ 生图失败")
         self.assertEqual(chain[1].text, "上游服务端错误，请稍后再试。")
+
+    def test_input_image_read_error_is_sanitized_without_leaking_source_path(self):
+        plugin = self.make_plugin()
+
+        image, err = asyncio.run(
+            plugin._load_single_input_image_for_event(None, "/app/.config/QQ/nt_qq_xxx/nt_data/Pic/2026-04/Ori/test.png")
+        )
+
+        self.assertIsNone(image)
+        self.assertIn("无法访问原图", err)
+        self.assertNotIn("/app/.config/QQ", err)
+        self.assertNotIn("test.png", err)
+
+    def test_input_image_size_limit_returns_clear_message(self):
+        plugin = self.make_plugin({"max_image_megabytes": 1})
+        fd, path = tempfile.mkstemp(suffix=".png")
+        os.close(fd)
+        try:
+            Path(path).write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * (1024 * 1024 + 8))
+            image, err = asyncio.run(plugin._load_single_input_image_for_event(None, path))
+        finally:
+            Path(path).unlink(missing_ok=True)
+
+        self.assertIsNone(image)
+        self.assertIn("超过大小限制", err)
+        self.assertIn("1MB", err)
 
     def test_handle_request_yields_accepted_before_api_call(self):
         plugin = self.make_plugin({"api_key": "test", "max_concurrency": 1})

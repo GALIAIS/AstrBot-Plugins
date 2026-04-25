@@ -1372,12 +1372,12 @@ class ChatGPTResponsesImagePlugin(Star):
     ) -> tuple[InputImage | None, str]:
         normalized = self._normalize_image_ref(source) or source
         resolved = await self._resolve_image_source(event, normalized)
-        data = await self._load_image_bytes(resolved)
+        data, load_err = await self._load_input_image_bytes_with_reason(resolved)
         if data is None:
-            return None, f"读取图片失败：{source}"
+            return None, load_err
         mime_type = self._guess_image_mime(data, self._guess_mime_from_name(resolved))
         if mime_type not in self._INPUT_MIME_TYPES:
-            return None, f"输入图片格式不支持：{mime_type or 'unknown'}"
+            return None, "输入图片格式不支持，请发送 PNG/JPEG/WEBP/GIF。"
         filename = self._build_upload_filename(resolved or source, mime_type)
         return InputImage(source=resolved or source, data=data, mime_type=mime_type, filename=filename), ""
 
@@ -1779,6 +1779,53 @@ class ChatGPTResponsesImagePlugin(Star):
         except Exception:
             return None
 
+    async def _load_input_image_bytes_with_reason(self, source: str) -> tuple[bytes | None, str]:
+        text = self._normalize_image_source(source)
+        if not text:
+            return None, "输入图片无效，请重新发送原图后再试。"
+
+        if text.startswith("data:"):
+            data, _ = self._decode_data_url(text)
+            if data is None:
+                return None, "输入图片解析失败，请重新发送原图后再试。"
+            if not self._within_image_limit(len(data)):
+                return None, self._input_image_limit_error()
+            if not self._looks_like_supported_image_data(data):
+                return None, "输入图片格式不支持，请发送 PNG/JPEG/WEBP/GIF。"
+            return data, ""
+
+        if text.startswith("base64://"):
+            try:
+                data = base64.b64decode(re.sub(r"\s+", "", text[len("base64://") :].strip()))
+            except Exception:
+                return None, "输入图片解析失败，请重新发送原图后再试。"
+            if not self._within_image_limit(len(data)):
+                return None, self._input_image_limit_error()
+            if not self._looks_like_supported_image_data(data):
+                return None, "输入图片格式不支持，请发送 PNG/JPEG/WEBP/GIF。"
+            return data, ""
+
+        if text.startswith(("http://", "https://")):
+            return await self._load_http_input_image_bytes_with_reason(text)
+
+        path = Path(text)
+        if not path.is_absolute():
+            path = Path.cwd() / path
+        if not path.exists() or not path.is_file():
+            return None, "输入图片已失效或当前环境无法访问原图，请重新发送原图后再试。"
+        try:
+            file_size = path.stat().st_size
+            if file_size > self._max_image_bytes():
+                return None, self._input_image_limit_error()
+            data = path.read_bytes()
+            if not self._within_image_limit(len(data)):
+                return None, self._input_image_limit_error()
+            if not self._looks_like_supported_image_data(data):
+                return None, "输入图片格式不支持，请发送 PNG/JPEG/WEBP/GIF。"
+            return data, ""
+        except Exception:
+            return None, "输入图片读取失败，请重新发送原图后再试。"
+
     async def _load_http_image_bytes(self, url: str) -> bytes | None:
         timeout = float(self._cfg("timeout", 180))
         max_bytes = self._max_image_bytes()
@@ -1810,6 +1857,47 @@ class ChatGPTResponsesImagePlugin(Star):
             except Exception:
                 continue
         return None
+
+    async def _load_http_input_image_bytes_with_reason(self, url: str) -> tuple[bytes | None, str]:
+        timeout = float(self._cfg("timeout", 180))
+        max_bytes = self._max_image_bytes()
+        header_sets = [
+            {"User-Agent": "astrbot-plugin-chatgpt-responses-image/2.0", "Accept": "image/*,*/*;q=0.8"},
+            {"User-Agent": "Mozilla/5.0", "Accept": "image/*,*/*;q=0.8"},
+            {"Accept": "*/*"},
+        ]
+        saw_too_large = False
+        for headers in header_sets:
+            try:
+                async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+                    async with client.stream("GET", url, headers=headers) as resp:
+                        if not (200 <= resp.status_code < 300):
+                            continue
+                        chunks: list[bytes] = []
+                        total = 0
+                        async for chunk in resp.aiter_bytes():
+                            total += len(chunk)
+                            if total > max_bytes:
+                                saw_too_large = True
+                                break
+                            chunks.append(chunk)
+                        if saw_too_large:
+                            continue
+                        data = b"".join(chunks)
+                        if not self._within_image_limit(len(data)):
+                            saw_too_large = True
+                            continue
+                        if not self._looks_like_supported_image_data(data):
+                            self._debug(
+                                f"http_image_invalid_data status={resp.status_code} ctype={resp.headers.get('content-type', '')} url={self._safe_ref(url)}"
+                            )
+                            continue
+                        return data, ""
+            except Exception:
+                continue
+        if saw_too_large:
+            return None, self._input_image_limit_error()
+        return None, "输入图片下载失败或链接已失效，请重新发送原图后再试。"
 
     def _decode_data_url(self, data_url: str) -> tuple[bytes | None, str]:
         text = (data_url or "").strip()
@@ -2470,6 +2558,10 @@ class ChatGPTResponsesImagePlugin(Star):
 
     def _within_image_limit(self, size: int) -> bool:
         return 0 < int(size) <= self._max_image_bytes()
+
+    def _input_image_limit_error(self) -> str:
+        limit_mb = max(1, int(self._cfg("max_image_megabytes", 20)))
+        return f"输入图片超过大小限制（当前上限 {limit_mb}MB），请压缩后再试。"
 
     def _supported_options_text(self, *, include_image: bool = True) -> str:
         keys = self._VISIBLE_SUPPORTED_OPTIONS if include_image else tuple(
