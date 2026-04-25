@@ -512,6 +512,95 @@ class PluginStabilityTests(unittest.TestCase):
         self.assertEqual(chain[0].text, "❌ 生图失败")
         self.assertEqual(chain[1].text, "上游服务端错误，请稍后再试。")
 
+    def test_blacklisted_sender_is_silently_ignored_for_generate(self):
+        plugin = self.make_plugin({"user_blacklist": ["123456"]})
+
+        class Event:
+            def __init__(self):
+                self.message_str = "gpt生图 cat"
+            def get_sender_id(self):
+                return "123456"
+            def plain_result(self, text):
+                return ("plain", text)
+
+        async def scenario():
+            return [item async for item in plugin._dispatch_action(Event(), "generate", "cat")]
+
+        results = asyncio.run(scenario())
+        self.assertEqual(results, [])
+
+    def test_sender_not_in_whitelist_is_silently_ignored_for_edit(self):
+        plugin = self.make_plugin({"user_whitelist": ["999999"]})
+
+        class Event:
+            def __init__(self):
+                self.message_str = "gpt改图 anime"
+            def get_sender_id(self):
+                return "123456"
+            def plain_result(self, text):
+                return ("plain", text)
+
+        async def scenario():
+            return [item async for item in plugin._dispatch_action(Event(), "edit", "anime")]
+
+        results = asyncio.run(scenario())
+        self.assertEqual(results, [])
+
+    def test_whitelisted_sender_can_continue_into_request_flow(self):
+        plugin = self.make_plugin({"api_key": "test", "user_whitelist": ["123456"]})
+        order = []
+
+        class Event:
+            def __init__(self):
+                self.message_str = "gpt生图 cat"
+            def get_sender_id(self):
+                return "123456"
+            def plain_result(self, text):
+                return ("plain", text)
+            async def send(self, result):
+                order.append(("sent", result))
+            def chain_result(self, chain):
+                return ("chain", chain)
+
+        async def fake_request(**kwargs):
+            order.append("api_called")
+            result = self.module.ImageAPIResult(
+                images=[self.module.OutputImage(data=PNG_1X1, mime_type="image/png")],
+                size="1024x1024",
+                output_format="png",
+            )
+            return True, result, ""
+
+        async def scenario():
+            plugin._request_responses_api = fake_request
+            results = [item async for item in plugin._dispatch_action(Event(), "generate", "cat")]
+            await asyncio.gather(*list(plugin._background_tasks))
+            return results
+
+        results = asyncio.run(scenario())
+        self.assertTrue(results)
+        self.assertIn("api_called", order)
+
+    def test_help_and_status_are_not_blocked_by_user_lists(self):
+        plugin = self.make_plugin({"user_whitelist": ["999999"], "user_blacklist": ["123456"]})
+
+        class Event:
+            def __init__(self):
+                self.message_str = "gpt图帮助"
+            def get_sender_id(self):
+                return "123456"
+            def plain_result(self, text):
+                return ("plain", text)
+
+        async def scenario():
+            help_results = [item async for item in plugin._dispatch_action(Event(), "help", "")]
+            status_results = [item async for item in plugin._dispatch_action(Event(), "status", "")]
+            return help_results, status_results
+
+        help_results, status_results = asyncio.run(scenario())
+        self.assertTrue(help_results)
+        self.assertTrue(status_results)
+
     def test_input_image_read_error_is_sanitized_without_leaking_source_path(self):
         plugin = self.make_plugin()
 

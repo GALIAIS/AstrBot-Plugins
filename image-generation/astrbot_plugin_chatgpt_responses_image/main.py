@@ -283,6 +283,9 @@ class ChatGPTResponsesImagePlugin(Star):
                 )
             )
             return
+        if action in {"generate", "edit"} and not self._is_sender_allowed(event):
+            self._debug(f"sender_blocked sender={self._event_sender_id(event)} action={action}")
+            return
         prompt, opts, err = self._parse_args(rest)
         if err:
             yield self._build_error_result(event, "参数解析失败", err)
@@ -589,6 +592,28 @@ class ChatGPTResponsesImagePlugin(Star):
         if user_id is not None:
             return str(user_id).strip()
         return ""
+
+    def _is_sender_allowed(self, event: AstrMessageEvent) -> bool:
+        sender_id = self._event_sender_id(event)
+        if not sender_id:
+            return True
+        blacklist = self._normalize_id_list(self._cfg("user_blacklist", []))
+        if sender_id in blacklist:
+            return False
+        whitelist = self._normalize_id_list(self._cfg("user_whitelist", []))
+        if whitelist and sender_id not in whitelist:
+            return False
+        return True
+
+    def _normalize_id_list(self, value: Any) -> set[str]:
+        items: list[str] = []
+        if isinstance(value, str):
+            items = [x.strip() for x in re.split(r"[\s,，;；]+", value) if x.strip()]
+        elif isinstance(value, list):
+            items = [str(x).strip() for x in value if str(x).strip()]
+        else:
+            return set()
+        return set(items)
 
     def _split_first_line(self, text: str) -> tuple[str, str]:
         value = str(text or "")

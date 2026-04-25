@@ -115,6 +115,16 @@
     "type": "bool",
     "default": true
   },
+  "user_whitelist": {
+    "description": "用户白名单（sender_id/QQ号）。非空时，仅白名单内用户可使用生图和改图",
+    "type": "list",
+    "default": []
+  },
+  "user_blacklist": {
+    "description": "用户黑名单（sender_id/QQ号）。命中后将静默忽略生图和改图指令",
+    "type": "list",
+    "default": []
+  },
   "debug": {
     "description": "输出调试日志（记录 transport、SSE 解析、回复取图等）",
     "type": "bool",
