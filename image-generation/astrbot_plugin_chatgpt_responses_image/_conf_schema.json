@@ -120,8 +120,18 @@
     "type": "list",
     "default": []
   },
+  "group_whitelist": {
+    "description": "群白名单（群号）。非空时，仅白名单内群可使用生图和改图",
+    "type": "list",
+    "default": []
+  },
   "user_blacklist": {
     "description": "用户黑名单（sender_id/QQ号）。命中后将静默忽略生图和改图指令",
+    "type": "list",
+    "default": []
+  },
+  "group_blacklist": {
+    "description": "群黑名单（群号）。命中后将静默忽略该群内的生图和改图指令",
     "type": "list",
     "default": []
   },

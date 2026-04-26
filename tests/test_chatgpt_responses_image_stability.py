@@ -556,6 +556,44 @@ class PluginStabilityTests(unittest.TestCase):
         results = asyncio.run(scenario())
         self.assertEqual(results, [])
 
+    def test_blacklisted_group_is_silently_ignored_for_generate(self):
+        plugin = self.make_plugin({"group_blacklist": ["888888"]})
+
+        class Event:
+            def __init__(self):
+                self.message_str = "gpt生图 cat"
+                self.group_id = "888888"
+            def get_sender_id(self):
+                return "123456"
+            def plain_result(self, text):
+                return ("plain", text)
+            def chain_result(self, chain):
+                return ("chain", chain)
+
+        async def scenario():
+            return [item async for item in plugin._dispatch_action(Event(), "generate", "cat")]
+
+        results = asyncio.run(scenario())
+        self.assertEqual(results, [])
+
+    def test_group_not_in_whitelist_is_silently_ignored(self):
+        plugin = self.make_plugin({"group_whitelist": ["888888"]})
+
+        class Event:
+            def __init__(self):
+                self.message_str = "gpt改图 anime"
+                self.group_id = "777777"
+            def get_sender_id(self):
+                return "123456"
+            def plain_result(self, text):
+                return ("plain", text)
+
+        async def scenario():
+            return [item async for item in plugin._dispatch_action(Event(), "edit", "anime")]
+
+        results = asyncio.run(scenario())
+        self.assertEqual(results, [])
+
     def test_admin_sender_bypasses_user_lists(self):
         plugin = self.make_plugin({"api_key": "test", "user_whitelist": ["999999"], "user_blacklist": ["123456"], "admin_user_ids": ["123456"]})
         order = []
@@ -590,6 +628,62 @@ class PluginStabilityTests(unittest.TestCase):
         results = asyncio.run(scenario())
         self.assertTrue(results)
         self.assertIn("api_called", order)
+
+    def test_admin_sender_bypasses_group_lists(self):
+        plugin = self.make_plugin({"api_key": "test", "group_whitelist": ["999999"], "group_blacklist": ["888888"], "admin_user_ids": ["123456"]})
+        order = []
+
+        class Event:
+            def __init__(self):
+                self.message_str = "gpt生图 cat"
+                self.group_id = "888888"
+            def get_sender_id(self):
+                return "123456"
+            def plain_result(self, text):
+                return ("plain", text)
+            def chain_result(self, chain):
+                return ("chain", chain)
+            async def send(self, result):
+                order.append(("sent", result))
+
+        async def fake_request(**kwargs):
+            order.append("api_called")
+            result = self.module.ImageAPIResult(
+                images=[self.module.OutputImage(data=PNG_1X1, mime_type="image/png")],
+                size="1024x1024",
+                output_format="png",
+            )
+            return True, result, ""
+
+        async def scenario():
+            plugin._request_responses_api = fake_request
+            results = [item async for item in plugin._dispatch_action(Event(), "generate", "cat")]
+            await asyncio.gather(*list(plugin._background_tasks))
+            return results
+
+        results = asyncio.run(scenario())
+        self.assertTrue(results)
+        self.assertIn("api_called", order)
+
+    def test_group_id_can_be_extracted_from_origin_for_group_lists(self):
+        plugin = self.make_plugin({"group_blacklist": ["888888"]})
+
+        class Event:
+            def __init__(self):
+                self.message_str = "gpt生图 cat"
+                self.unified_msg_origin = "platform:group_888888"
+            def get_sender_id(self):
+                return "123456"
+            def plain_result(self, text):
+                return ("plain", text)
+            def chain_result(self, chain):
+                return ("chain", chain)
+
+        async def scenario():
+            return [item async for item in plugin._dispatch_action(Event(), "generate", "cat")]
+
+        results = asyncio.run(scenario())
+        self.assertEqual(results, [])
 
     def test_whitelisted_sender_can_continue_into_request_flow(self):
         plugin = self.make_plugin({"api_key": "test", "user_whitelist": ["123456"]})

@@ -598,14 +598,49 @@ class ChatGPTResponsesImagePlugin(Star):
             return str(user_id).strip()
         return ""
 
+    def _event_group_id(self, event: AstrMessageEvent) -> str:
+        for attr in ("group_id", "groupId"):
+            value = getattr(event, attr, None)
+            if value is not None:
+                text = str(value).strip()
+                if text:
+                    return text
+        message_obj = getattr(event, "message_obj", None)
+        for attr in ("group_id", "groupId"):
+            value = getattr(message_obj, attr, None)
+            if value is not None:
+                text = str(value).strip()
+                if text:
+                    return text
+        raw_message = getattr(message_obj, "raw_message", None)
+        if isinstance(raw_message, dict):
+            for key in ("group_id", "groupId"):
+                value = raw_message.get(key)
+                if value is not None:
+                    text = str(value).strip()
+                    if text:
+                        return text
+        origin = str(getattr(event, "unified_msg_origin", "") or "").strip()
+        match = re.search(r"group[:/_-]?(\d+)", origin, flags=re.IGNORECASE)
+        if match:
+            return match.group(1).strip()
+        return ""
+
     def _is_sender_allowed(self, event: AstrMessageEvent) -> bool:
         sender_id = self._event_sender_id(event)
         if not sender_id:
             return True
         if self._is_sender_admin(event):
             return True
+        group_id = self._event_group_id(event)
+        blacklist_groups = self._normalize_id_list(self._cfg("group_blacklist", []))
+        if group_id and group_id in blacklist_groups:
+            return False
         blacklist = self._normalize_id_list(self._cfg("user_blacklist", []))
         if sender_id in blacklist:
+            return False
+        whitelist_groups = self._normalize_id_list(self._cfg("group_whitelist", []))
+        if group_id and whitelist_groups and group_id not in whitelist_groups:
             return False
         whitelist = self._normalize_id_list(self._cfg("user_whitelist", []))
         if whitelist and sender_id not in whitelist:
