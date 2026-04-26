@@ -230,6 +230,122 @@ class PluginStabilityTests(unittest.TestCase):
         self.assertFalse(err)
         self.assertEqual(opts["session_id"], "manual-session")
 
+    def test_relay_endpoints_override_legacy_base_url(self):
+        plugin = self.make_plugin({
+            "base_url": "https://legacy.example.com",
+            "api_key": "legacy-key",
+            "relay_endpoints": [
+                {"name": "a", "base_url": "https://a.example.com", "api_key": "key-a", "priority": 10, "weight": 1},
+                {"name": "b", "base_url": "https://b.example.com", "api_key": "key-b", "priority": 20, "weight": 1},
+            ],
+        })
+        relays = plugin._get_relay_configs()
+        self.assertEqual([relay.name for relay in relays], ["a", "b"])
+        self.assertEqual(relays[0].api_key, "key-a")
+
+    def test_relay_order_prefers_priority_then_rotates_by_weight(self):
+        plugin = self.make_plugin({
+            "relay_endpoints": [
+                {"name": "a", "base_url": "https://a.example.com", "api_key": "key-a", "priority": 10, "weight": 2},
+                {"name": "b", "base_url": "https://b.example.com", "api_key": "key-b", "priority": 10, "weight": 1},
+                {"name": "c", "base_url": "https://c.example.com", "api_key": "key-c", "priority": 20, "weight": 1},
+            ],
+        })
+        first = [relay.name for relay in plugin._ordered_relays_for_attempt()]
+        second = [relay.name for relay in plugin._ordered_relays_for_attempt()]
+        third = [relay.name for relay in plugin._ordered_relays_for_attempt()]
+        self.assertEqual(first[-1], "c")
+        self.assertEqual(second[-1], "c")
+        self.assertTrue(any(order[:2] != first[:2] for order in (second, third)))
+
+    def test_request_switches_to_next_relay_on_retryable_failure(self):
+        plugin = self.make_plugin({
+            "api_key": "legacy-key",
+            "relay_endpoints": [
+                {"name": "a", "base_url": "https://a.example.com", "api_key": "key-a", "priority": 10},
+                {"name": "b", "base_url": "https://b.example.com", "api_key": "key-b", "priority": 20},
+            ],
+            "server_error_retries": 0,
+        })
+        calls = []
+
+        async def fake_transport(**kwargs):
+            calls.append(kwargs["endpoint"])
+            if "a.example.com" in kwargs["endpoint"]:
+                return False, 0, {}, "", "temporary failure in name resolution"
+            return True, 200, {"content-type": "text/event-stream"}, (
+                "data: " + json.dumps({
+                    "type": "response.completed",
+                    "response": {
+                        "model": "gpt-5.4",
+                        "status": "completed",
+                        "output": [{
+                            "type": "image_generation_call",
+                            "size": "1024x1024",
+                            "output_format": "png",
+                            "result": base64.b64encode(PNG_1X1).decode("ascii"),
+                        }],
+                    },
+                }) + "\n\n"
+            ), ""
+
+        async def scenario():
+            plugin._request_responses_transport = fake_transport
+            return await plugin._request_responses_api(
+                api_key="legacy-key",
+                payload={},
+                output_format_hint="png",
+                session_id="test-session",
+            )
+
+        ok, result, err = asyncio.run(scenario())
+        self.assertTrue(ok, err)
+        self.assertIsNotNone(result)
+        self.assertEqual(len(calls), 2)
+        self.assertIn("a.example.com", calls[0])
+        self.assertIn("b.example.com", calls[1])
+
+    def test_non_retryable_error_does_not_switch_relay(self):
+        plugin = self.make_plugin({
+            "api_key": "legacy-key",
+            "relay_endpoints": [
+                {"name": "a", "base_url": "https://a.example.com", "api_key": "key-a", "priority": 10},
+                {"name": "b", "base_url": "https://b.example.com", "api_key": "key-b", "priority": 20},
+            ],
+            "server_error_retries": 0,
+        })
+        calls = []
+
+        async def fake_transport(**kwargs):
+            calls.append(kwargs["endpoint"])
+            return True, 401, {"content-type": "application/json"}, json.dumps({"error": {"message": "unauthorized"}}), ""
+
+        async def scenario():
+            plugin._request_responses_transport = fake_transport
+            return await plugin._request_responses_api(
+                api_key="legacy-key",
+                payload={},
+                output_format_hint="png",
+                session_id="test-session",
+            )
+
+        ok, result, err = asyncio.run(scenario())
+        self.assertFalse(ok)
+        self.assertIsNone(result)
+        self.assertEqual(len(calls), 1)
+
+    def test_status_summary_includes_relay_pool(self):
+        plugin = self.make_plugin({
+            "relay_endpoints": [
+                {"name": "a", "base_url": "https://a.example.com", "api_key": "key-a"},
+                {"name": "b", "base_url": "https://b.example.com", "api_key": "key-b"},
+            ],
+        })
+        plugin._relay_runtime["a"] = {"inflight": 1}
+        summary = plugin._summarize_relays_for_status()
+        self.assertIn("中转：2 个", summary)
+        self.assertIn("a:可用/1", summary)
+
     def test_sse_upstream_stream_error_is_readable_without_retry_copy(self):
         plugin = self.make_plugin()
         sse = "data: " + json.dumps({

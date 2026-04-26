@@ -52,6 +52,18 @@ class ImageAPIResult:
     used_partial_fallback: bool = False
 
 
+@dataclass
+class RelayEndpointConfig:
+    name: str
+    base_url: str
+    api_key: str
+    chatgpt_account_id: str = ""
+    enabled: bool = True
+    priority: int = 100
+    weight: int = 1
+    max_concurrency: int = 0
+
+
 @register(
     "astrbot_plugin_chatgpt_responses_image",
     "午时五十五",
@@ -220,6 +232,9 @@ class ChatGPTResponsesImagePlugin(Star):
         self._background_tasks: set[asyncio.Task] = set()
         self._rate_limit_lock = asyncio.Lock()
         self._sender_rate_limit_hits: dict[str, list[float]] = {}
+        self._relay_state_lock = asyncio.Lock()
+        self._relay_runtime: dict[str, dict[str, Any]] = {}
+        self._relay_rr_counter = 0
 
     async def initialize(self):
         logger.info("astrbot_plugin_chatgpt_responses_image 已初始化")
@@ -272,6 +287,7 @@ class ChatGPTResponsesImagePlugin(Star):
                 queue_wait = max(0, self._queue_waiting)
                 queue_running = max(0, self._queue_running)
             allow_partial = "开启" if self._to_bool(self._cfg("allow_partial_fallback", True), True) else "关闭"
+            relay_summary = self._summarize_relays_for_status()
             yield event.plain_result(
                 self._format_card(
                     "插件状态",
@@ -279,6 +295,7 @@ class ChatGPTResponsesImagePlugin(Star):
                         f"队列：待处理 {queue_wait} 个 · 进行中 {queue_running} 个",
                         f"限制：并发 {self._max_concurrency} · 排队 {self._max_queue_waiting}",
                         f"默认：{self._cfg('default_model', 'gpt-5.4')} · {self._display_size(str(self._cfg('default_size', '1024x1024')))} · {self._display_output_format(str(self._cfg('default_output_format', 'png')))}",
+                        relay_summary,
                         f"协议：Responses SSE · partial 兜底 {allow_partial}",
                     ],
                     icon="🧩",
@@ -358,8 +375,8 @@ class ChatGPTResponsesImagePlugin(Star):
         action: str,
     ):
         api_key = str(self._cfg("api_key", "")).strip()
-        if not api_key:
-            yield self._build_error_result(event, "未配置 API Key", "请先在插件配置中填写 api_key。")
+        if not api_key and not self._get_relay_configs():
+            yield self._build_error_result(event, "未配置 API Key", "请先在插件配置中填写 api_key，或配置 relay_endpoints。")
             return
 
         request_opts, err = self._resolve_request_options(opts)
@@ -657,6 +674,139 @@ class ChatGPTResponsesImagePlugin(Star):
             return set()
         return set(items)
 
+    def _get_relay_configs(self) -> list[RelayEndpointConfig]:
+        configured = self._cfg("relay_endpoints", [])
+        relays: list[RelayEndpointConfig] = []
+        if isinstance(configured, list):
+            for idx, item in enumerate(configured, start=1):
+                if not isinstance(item, dict):
+                    continue
+                base_url = str(item.get("base_url", "")).strip()
+                api_key = str(item.get("api_key", "")).strip()
+                if not base_url or not api_key:
+                    continue
+                relays.append(
+                    RelayEndpointConfig(
+                        name=str(item.get("name", "")).strip() or f"relay-{idx}",
+                        base_url=base_url,
+                        api_key=api_key,
+                        chatgpt_account_id=str(item.get("chatgpt_account_id", "")).strip(),
+                        enabled=self._to_bool(item.get("enabled", True), True),
+                        priority=int(item.get("priority", 100) or 100),
+                        weight=max(1, int(item.get("weight", 1) or 1)),
+                        max_concurrency=max(0, int(item.get("max_concurrency", 0) or 0)),
+                    )
+                )
+        if relays:
+            return relays
+        base_url = str(self._cfg("base_url", "https://api.openai.com")).strip()
+        api_key = str(self._cfg("api_key", "")).strip()
+        if not api_key:
+            return []
+        return [
+            RelayEndpointConfig(
+                name="default",
+                base_url=base_url or "https://api.openai.com",
+                api_key=api_key,
+                chatgpt_account_id=str(self._cfg("chatgpt_account_id", "")).strip(),
+                enabled=True,
+                priority=100,
+                weight=1,
+                max_concurrency=0,
+            )
+        ]
+
+    def _ordered_relays_for_attempt(self) -> list[RelayEndpointConfig]:
+        relays = [relay for relay in self._get_relay_configs() if relay.enabled]
+        if not relays:
+            return []
+        now = time.monotonic()
+        preferred: list[RelayEndpointConfig] = []
+        fallback: list[RelayEndpointConfig] = []
+        for relay in sorted(relays, key=lambda x: (x.priority, x.name.lower())):
+            state = self._relay_runtime.get(relay.name, {})
+            cooldown_until = float(state.get("cooldown_until", 0.0) or 0.0)
+            inflight = int(state.get("inflight", 0) or 0)
+            at_capacity = relay.max_concurrency > 0 and inflight >= relay.max_concurrency
+            if cooldown_until > now or at_capacity:
+                fallback.append(relay)
+            else:
+                preferred.append(relay)
+        ordered = self._weighted_rotate_relays(preferred) + self._weighted_rotate_relays(fallback)
+        deduped: list[RelayEndpointConfig] = []
+        seen: set[str] = set()
+        for relay in ordered:
+            if relay.name in seen:
+                continue
+            seen.add(relay.name)
+            deduped.append(relay)
+        return deduped
+
+    def _weighted_rotate_relays(self, relays: list[RelayEndpointConfig]) -> list[RelayEndpointConfig]:
+        if not relays:
+            return []
+        expanded: list[RelayEndpointConfig] = []
+        for relay in relays:
+            expanded.extend([relay] * max(1, relay.weight))
+        if not expanded:
+            return relays
+        start = self._relay_rr_counter % len(expanded)
+        self._relay_rr_counter += 1
+        rotated = expanded[start:] + expanded[:start]
+        ordered: list[RelayEndpointConfig] = []
+        seen: set[str] = set()
+        for relay in rotated:
+            if relay.name in seen:
+                continue
+            seen.add(relay.name)
+            ordered.append(relay)
+        return ordered
+
+    async def _mark_relay_inflight(self, relay_name: str, delta: int) -> None:
+        async with self._relay_state_lock:
+            state = self._relay_runtime.setdefault(relay_name, {})
+            state["inflight"] = max(0, int(state.get("inflight", 0) or 0) + delta)
+
+    async def _mark_relay_success(self, relay_name: str) -> None:
+        async with self._relay_state_lock:
+            state = self._relay_runtime.setdefault(relay_name, {})
+            state["consecutive_failures"] = 0
+            state["cooldown_until"] = 0.0
+            state["last_error"] = ""
+            state["successes"] = int(state.get("successes", 0) or 0) + 1
+
+    async def _mark_relay_failure(self, relay_name: str, err: str, *, switchable: bool) -> None:
+        async with self._relay_state_lock:
+            state = self._relay_runtime.setdefault(relay_name, {})
+            state["last_error"] = str(err or "").strip()[:240]
+            if not switchable:
+                state["consecutive_failures"] = 0
+                return
+            fails = int(state.get("consecutive_failures", 0) or 0) + 1
+            state["consecutive_failures"] = fails
+            if fails >= 3:
+                state["cooldown_until"] = time.monotonic() + 60.0
+
+    def _summarize_relays_for_status(self) -> str:
+        relays = self._get_relay_configs()
+        if not relays:
+            return "中转：未配置"
+        parts: list[str] = []
+        now = time.monotonic()
+        for relay in relays[:6]:
+            state = self._relay_runtime.get(relay.name, {})
+            inflight = int(state.get("inflight", 0) or 0)
+            cooldown_until = float(state.get("cooldown_until", 0.0) or 0.0)
+            if cooldown_until > now:
+                status = "熔断"
+            elif not relay.enabled:
+                status = "停用"
+            else:
+                status = "可用"
+            parts.append(f"{relay.name}:{status}/{inflight}")
+        suffix = " ..." if len(relays) > 6 else ""
+        return f"中转：{len(relays)} 个 · " + " · ".join(parts) + suffix
+
     async def _check_sender_rate_limit(self, event: AstrMessageEvent) -> bool:
         sender_id = self._event_sender_id(event)
         if not sender_id:
@@ -807,49 +957,100 @@ class ChatGPTResponsesImagePlugin(Star):
         output_format_hint: str,
         session_id: str,
     ) -> tuple[bool, ImageAPIResult | None, str]:
-        endpoint = self._build_responses_endpoint(str(self._cfg("base_url", "https://api.openai.com")).strip())
+        relays = self._ordered_relays_for_attempt()
+        if not relays:
+            return False, None, "未配置可用中转站，请检查 relay_endpoints 或 base_url/api_key。"
         timeout = float(self._cfg("timeout", 180))
         retries = max(0, int(self._cfg("server_error_retries", 2)))
         backoff = max(0.2, float(self._cfg("server_error_retry_backoff_seconds", 1.2)))
-        headers = self._build_headers(api_key, session_id=session_id)
         last_err = "请求失败"
+        attempted_relays: list[str] = []
 
-        for attempt in range(retries + 1):
-            ok_http, status_code, resp_headers, resp_text, transport_err = await self._request_responses_transport(
-                endpoint=endpoint,
-                headers=headers,
+        for relay in relays:
+            attempted_relays.append(relay.name)
+            ok, result, err, should_switch = await self._request_responses_api_via_relay(
+                relay=relay,
+                legacy_api_key=api_key,
                 payload=payload,
+                output_format_hint=output_format_hint,
+                session_id=session_id,
                 timeout=timeout,
+                retries=retries,
+                backoff=backoff,
             )
-            retryable_server_error = False
+            if ok:
+                return True, result, ""
+            last_err = err or last_err
+            if not should_switch:
+                break
 
-            if not ok_http:
-                last_err = self._brief_error(transport_err, "请求失败")
-            elif 200 <= status_code < 300:
-                content_type = str(resp_headers.get("content-type", "")).lower()
-                if "application/json" in content_type:
-                    parsed_ok, parsed_result, parsed_err = await self._parse_json_response(resp_text, output_format_hint)
-                else:
-                    parsed_ok, parsed_result, parsed_err = await self._parse_sse_text(resp_text, output_format_hint)
-                if parsed_ok:
-                    return True, parsed_result, ""
-                last_err = self._brief_error(parsed_err, parsed_err or "解析响应失败")
-                retryable_server_error = self._looks_like_retryable_server_error(parsed_err)
-            else:
-                self._debug(
-                    f"http_non_2xx_responses status={status_code} ctype={str(resp_headers.get('content-type', ''))} endpoint={self._safe_ref(endpoint)}"
-                )
-                last_err = self._brief_error(resp_text, f"HTTP {status_code}", status_code, httpx.Headers(resp_headers))
-                retryable_server_error = self._status_is_retryable_server_error(status_code)
-
-            if retryable_server_error and attempt < retries:
-                delay = backoff * (attempt + 1)
-                self._debug(f"retry_server_error attempt={attempt + 1} delay={delay:.2f}s status={status_code}")
-                await asyncio.sleep(delay)
-                continue
-            return False, None, last_err
-
+        if len(attempted_relays) > 1:
+            last_err = f"{last_err}（已尝试：{' -> '.join(attempted_relays)}）"
         return False, None, last_err
+
+    async def _request_responses_api_via_relay(
+        self,
+        *,
+        relay: RelayEndpointConfig,
+        legacy_api_key: str,
+        payload: dict[str, Any],
+        output_format_hint: str,
+        session_id: str,
+        timeout: float,
+        retries: int,
+        backoff: float,
+    ) -> tuple[bool, ImageAPIResult | None, str, bool]:
+        endpoint = self._build_responses_endpoint(relay.base_url)
+        api_key = relay.api_key or legacy_api_key
+        headers = self._build_headers(api_key, session_id=session_id, account_id=relay.chatgpt_account_id)
+        last_err = "请求失败"
+        should_switch = True
+        await self._mark_relay_inflight(relay.name, 1)
+        try:
+            for attempt in range(retries + 1):
+                ok_http, status_code, resp_headers, resp_text, transport_err = await self._request_responses_transport(
+                    endpoint=endpoint,
+                    headers=headers,
+                    payload=payload,
+                    timeout=timeout,
+                )
+                retryable_server_error = False
+
+                if not ok_http:
+                    last_err = self._brief_error(transport_err, "请求失败")
+                    should_switch = self._looks_like_retryable_transport_error(transport_err)
+                elif 200 <= status_code < 300:
+                    content_type = str(resp_headers.get("content-type", "")).lower()
+                    if "application/json" in content_type:
+                        parsed_ok, parsed_result, parsed_err = await self._parse_json_response(resp_text, output_format_hint)
+                    else:
+                        parsed_ok, parsed_result, parsed_err = await self._parse_sse_text(resp_text, output_format_hint)
+                    if parsed_ok:
+                        await self._mark_relay_success(relay.name)
+                        return True, parsed_result, "", False
+                    last_err = self._brief_error(parsed_err, parsed_err or "解析响应失败")
+                    retryable_server_error = self._looks_like_retryable_server_error(parsed_err)
+                    should_switch = retryable_server_error
+                else:
+                    self._debug(
+                        f"http_non_2xx_responses relay={relay.name} status={status_code} ctype={str(resp_headers.get('content-type', ''))} endpoint={self._safe_ref(endpoint)}"
+                    )
+                    last_err = self._brief_error(resp_text, f"HTTP {status_code}", status_code, httpx.Headers(resp_headers))
+                    retryable_server_error = self._status_is_retryable_server_error(status_code)
+                    should_switch = retryable_server_error
+
+                if retryable_server_error and attempt < retries:
+                    delay = backoff * (attempt + 1)
+                    self._debug(f"retry_server_error relay={relay.name} attempt={attempt + 1} delay={delay:.2f}s status={status_code}")
+                    await asyncio.sleep(delay)
+                    continue
+                await self._mark_relay_failure(relay.name, last_err, switchable=should_switch)
+                return False, None, last_err, should_switch
+        finally:
+            await self._mark_relay_inflight(relay.name, -1)
+
+        await self._mark_relay_failure(relay.name, last_err, switchable=should_switch)
+        return False, None, last_err, should_switch
 
     async def _request_responses_transport(
         self,
@@ -1314,7 +1515,7 @@ class ChatGPTResponsesImagePlugin(Star):
         revised_prompt = str(payload.get("revised_prompt") or "").strip()
         return OutputImage(data=data, mime_type=mime, revised_prompt=revised_prompt), ""
 
-    def _build_headers(self, api_key: str, *, session_id: str) -> dict[str, str]:
+    def _build_headers(self, api_key: str, *, session_id: str, account_id: str = "") -> dict[str, str]:
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Accept": "text/event-stream",
@@ -1330,7 +1531,7 @@ class ChatGPTResponsesImagePlugin(Star):
             "originator": str(self._cfg("originator", "codex_cli_rs")).strip() or "codex_cli_rs",
             "session_id": session_id or f"chatgpt-responses-image-{int(time.time() * 1000)}",
         }
-        account_id = str(self._cfg("chatgpt_account_id", "")).strip()
+        account_id = str(account_id or self._cfg("chatgpt_account_id", "")).strip()
         if account_id:
             headers["chatgpt-account-id"] = account_id
         return headers

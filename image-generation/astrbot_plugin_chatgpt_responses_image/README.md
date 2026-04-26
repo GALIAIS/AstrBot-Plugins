@@ -54,6 +54,7 @@
 - `base_url`：支持裸域名、`/v1`、`/v1/response`、`/v1/responses`
 - `api_key`：必填
 - `chatgpt_account_id`：可选，部分中转站要求
+- `relay_endpoints`：可选，多中转站池；每项支持 `name/base_url/api_key/chatgpt_account_id/enabled/priority/weight/max_concurrency`
 - `default_model`：默认 `gpt-5.4`
 - `default_size`：默认尺寸，支持 `auto` 或任意 `<宽>x<高>`
 - `default_output_format`：默认输出文件格式
@@ -81,6 +82,7 @@
 ## 行为说明
 
 - 固定使用 `Responses SSE`，不再走 `/v1/images/generations` 或 `/v1/images/edits`
+- 若配置 `relay_endpoints`，插件会优先走中转站池：按优先级 + 加权轮询选择节点，遇到可恢复错误时自动切换下一个中转站
 - 图生图通过 `input_text + input_image(data URL)` 发送到 `/v1/responses`
 - `image_generation` tool 当前只发送 `type / size / output_format`，保持与参考实现一致
 - 当前版本不支持 `mask / inpainting`
