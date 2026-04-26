@@ -38,19 +38,19 @@ class GameResourceSearchPlugin(Star):
 
         keyword = self._rest_after_command(event.message_str)
         if not keyword.strip():
-            yield event.plain_result("用法：/game <关键词>")
+            yield event.plain_result("用法：game <关键词>")
             return
 
         ok, rows, err = await self._query_games_by_keyword(keyword.strip())
         if not ok:
-            yield event.plain_result(f"查询游戏资源失败：{err}")
+            yield event.plain_result(f"查询失败：{err}")
             return
 
         if not rows:
-            yield event.plain_result(f"未找到包含关键词「{keyword}」的游戏资源。")
+            yield event.plain_result(f"未找到与「{keyword}」相关的资源。")
             return
 
-        lines: list[str] = [f"命中 {len(rows)} 条游戏资源："]
+        lines: list[str] = [f"命中 {len(rows)} 条结果："]
         for i, row in enumerate(rows, start=1):
             title_cn = str(row.get("title_cn") or "").strip()
             title_jp = str(row.get("title_jp") or "").strip()
@@ -59,8 +59,8 @@ class GameResourceSearchPlugin(Star):
                 name = f"{title_cn} / {title_jp}"
 
             links = self._extract_download_links(row.get("download_link"))
-            link_text = "；".join(links) if links else "无有效资源链接"
-            lines.append(f"{i}. {name}\n资源：{link_text}")
+            link_text = "；".join(links) if links else "无可用链接"
+            lines.append(f"{i}. {name}\n链接：{link_text}")
 
         msg = "\n\n".join(lines)
         if len(msg) > 3600:
@@ -181,4 +181,4 @@ class GameResourceSearchPlugin(Star):
         normalized = {str(x).strip() for x in allowed_ids if str(x).strip()}
         if sender_id in normalized:
             return None
-        return event.plain_result("当前用户无权限使用此插件。")
+        return event.plain_result("当前账号无权限使用该指令。")

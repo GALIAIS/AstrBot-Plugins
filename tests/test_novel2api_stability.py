@@ -245,7 +245,7 @@ class Novel2ApiStabilityTests(unittest.TestCase):
     def test_help_text_is_card_style(self):
         plugin = self.make_plugin()
         text = plugin._help_text()
-        self.assertIn("📘 NovelAI 指令帮助", text)
+        self.assertIn("📘 NovelAI 帮助", text)
         self.assertIn("固定尺寸：Portrait", text)
 
     def test_quota_card_style(self):

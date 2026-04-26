@@ -338,11 +338,11 @@ class ChatGPTResponsesImagePlugin(Star):
                 self._format_card(
                     "插件状态",
                     [
-                        f"队列：待处理 {queue_wait} 个 · 进行中 {queue_running} 个",
-                        f"限制：并发 {self._max_concurrency} · 排队 {self._max_queue_waiting}",
+                        f"队列：等待 {queue_wait} 个 · 运行 {queue_running} 个",
+                        f"上限：并发 {self._max_concurrency} · 排队 {self._max_queue_waiting}",
                         f"默认：{self._cfg('default_model', 'gpt-5.4')} · {self._display_size(str(self._cfg('default_size', '1024x1024')))} · {self._display_output_format(str(self._cfg('default_output_format', 'png')))}",
                         relay_summary,
-                        f"协议：Responses SSE · partial 兜底 {allow_partial}",
+                        f"协议：Responses SSE · partial 回退 {allow_partial}",
                     ],
                     icon="🧩",
                 )
@@ -2519,14 +2519,14 @@ class ChatGPTResponsesImagePlugin(Star):
             "✅ 图像生成完成",
             f"模型：{model}",
             (
-                f"模式：{action_name} · "
+                f"任务：{action_name} · "
                 f"尺寸：{self._display_size(size)} · "
                 f"格式：{self._display_output_format(output_format)}"
             ),
-            f"响应：Responses SSE · 数量：{len(api_result.images)} 张 · 耗时：{elapsed:.2f}s",
+            f"结果：{len(api_result.images)} 张 · 耗时：{elapsed:.2f}s",
         ]
         if extra_items:
-            lines.append(f"细节：{' · '.join(extra_items)}")
+            lines.append(f"附加：{' · '.join(extra_items)}")
         return "\n".join(lines)
 
     def _format_card(self, title: str, lines: list[str], icon: str = "ℹ️") -> str:
@@ -2542,18 +2542,18 @@ class ChatGPTResponsesImagePlugin(Star):
     def _format_queue_card(self, wait_num: int, concurrent: bool = False) -> str:
         if concurrent:
             return self._format_card(
-                "已进入并发生图队列",
+                "已加入并发队列",
                 [
-                    f"当前前置任务 {wait_num} 个",
-                    f"插件会按并发模式执行（最大 {self._max_concurrency} 个同时进行），完成后只发送最终成图",
+                    f"前方待处理 {wait_num} 个任务",
+                    f"按并发模式执行，最多 {self._max_concurrency} 个任务同时处理，仅回传最终成图",
                 ],
                 icon="⏳",
             )
         return self._format_card(
-            "已进入生图队列",
+            "已加入队列",
             [
                 f"前方还有 {wait_num} 个任务",
-                "插件会按顺序执行，完成后只发送最终成图",
+                "按顺序处理，仅回传最终成图",
             ],
             icon="⏳",
         )
@@ -2586,8 +2586,8 @@ class ChatGPTResponsesImagePlugin(Star):
                     "gpt改图 <prompt> [size=1024x1024|2160x3840|auto] [format=png|jpeg|webp] [model=gpt-5.4]",
                     "支持直接附图、回复图片、重复 --image、多图 image=a.png,b.png",
                     f"可选参数：{self._supported_options_text(include_image=False)}",
-                    f"已移除参数：{self._removed_options_text()}，传入会报错",
-                    "固定走 Responses + image_generation + SSE，只发送最终成图；当前不支持 --mask",
+                    f"已移除参数：{self._removed_options_text()}；传入会直接报错",
+                    "固定使用 Responses + image_generation + SSE，仅回传最终成图；当前不支持 --mask",
                 ],
                 icon="🖼️",
             )
@@ -2596,9 +2596,9 @@ class ChatGPTResponsesImagePlugin(Star):
             [
                 "gpt生图 <prompt> [size=1024x1024|2160x3840|auto] [format=png|jpeg|webp] [model=gpt-5.4]",
                 f"可选参数：{self._supported_options_text(include_image=False)}",
-                f"已移除参数：{self._removed_options_text()}，传入会报错",
+                f"已移除参数：{self._removed_options_text()}；传入会直接报错",
                 "示例：gpt生图 史诗感动画海报 size=2160x3840 format=png",
-                "固定走 Responses + image_generation + SSE，只发送最终成图",
+                "固定使用 Responses + image_generation + SSE，仅回传最终成图",
             ],
             icon="✨",
         )
@@ -2658,15 +2658,15 @@ class ChatGPTResponsesImagePlugin(Star):
         if json_summary:
             return json_summary
         if "stream_read_error" in lower and "upstream_error" in lower:
-            return "上游流式读取失败（stream_read_error）。通常是中转站/源站临时断流或生成任务被上游中断。"
+            return "上游流式读取失败，请稍后重试。"
         if "stream_read_error" in lower or "upstream_error" in lower:
             return "上游流式响应异常，请稍后再试或换一个更安全/更短的 prompt。"
         if "safety system" in lower or "safety_violations" in lower or "image_generation_user_error" in lower:
             return "请求被安全系统拒绝。请调整 prompt，减少露骨、暴力、未成年、羞辱或伤害描述。"
         if "server_error" in lower:
-            return "上游服务端错误，请稍后再试。"
+            return "上游暂时不可用，请稍后重试。"
         if "image-only model" in lower or "responses-capable text model" in lower:
-            return "model 不能填 gpt-image-2；请使用 gpt-5.4 这类 Responses 文本模型，图片模型由 image_generation 工具自动调用。"
+            return "model 不能使用 gpt-image-2；请改用 gpt-5.4 等 Responses 文本模型。"
         if status_code == 401 or "unauthorized" in lower:
             return "鉴权失败，请检查 api_key。"
         if status_code == 403:
@@ -2686,7 +2686,7 @@ class ChatGPTResponsesImagePlugin(Star):
                 return html_summary
             if status_code == 504:
                 return "上游网关超时。请检查 API 域名是否仍经过 CDN/WAF，或源站生成任务是否超过代理超时。"
-            return "上游网关/CDN 返回错误页，请检查当前服务器到图片接口的连通性或 WAF/CDN 策略。"
+            return "上游返回错误页，请检查当前服务器到接口的连通性或 CDN/WAF 配置。"
         if status_code == 502:
             return "上游暂不支持当前请求形态，请检查是否仍带有参考实现之外的 tool 字段。"
         if status_code == 503:
@@ -2694,7 +2694,7 @@ class ChatGPTResponsesImagePlugin(Star):
         if "timeout" in lower:
             return "请求超时。"
         if "connection" in lower:
-            return "连接失败。"
+            return "连接失败，请检查服务地址或 DNS。"
         html_summary = self._extract_html_error_summary(raw, status_code)
         if html_summary:
             return html_summary
@@ -2806,15 +2806,15 @@ class ChatGPTResponsesImagePlugin(Star):
     ) -> str:
         lower = message.lower()
         if "stream_read_error" in lower and "upstream_error" in lower:
-            return "上游流式读取失败（stream_read_error）。通常是中转站/源站临时断流或生成任务被上游中断。"
+            return "上游流式读取失败，请稍后重试。"
         if "stream_read_error" in lower or "upstream_error" in lower:
             return "上游流式响应异常，请稍后再试或换一个更安全/更短的 prompt。"
         if "safety system" in lower or "safety_violations" in lower or "image_generation_user_error" in lower:
             return "请求被安全系统拒绝。请调整 prompt，减少露骨、暴力、未成年、羞辱或伤害描述。"
         if error_type == "server_error" or code == "server_error" or "server_error" in lower:
-            return "上游服务端错误，请稍后再试。"
+            return "上游暂时不可用，请稍后重试。"
         if "image-only model" in lower or "responses-capable text model" in lower:
-            return "model 不能填 gpt-image-2；请使用 gpt-5.4 这类 Responses 文本模型，图片模型由 image_generation 工具自动调用。"
+            return "model 不能使用 gpt-image-2；请改用 gpt-5.4 等 Responses 文本模型。"
         if status_code == 401 or "unauthorized" in lower:
             return "鉴权失败，请检查 api_key。"
         if status_code == 403:
@@ -2977,21 +2977,21 @@ class ChatGPTResponsesImagePlugin(Star):
 
     def _help_text(self) -> str:
         return self._format_card(
-            "ChatGPT Images 指令帮助",
+            "ChatGPT Images 帮助",
             [
-                "gpt生图 <prompt>  文生图",
-                "gpt改图 <prompt>  图生图 / 多图改图",
-                "gpt图状态  查看默认参数和队列状态",
-                "gpt图中转状态  查看中转站池详情",
-                "gpt图切站 <relay-name|auto>  手动指定优先中转站",
-                "gpt图恢复中转 <relay-name|all>  清除中转站熔断状态",
-                "gpt图帮助  查看这份帮助",
-                "也支持简繁英触发：gpt 繪圖 / gpt 改圖 / gpt image / edit image / gpt help / chatgpt status",
+                "gpt生图 <prompt>：文生图",
+                "gpt改图 <prompt>：图生图 / 多图改图",
+                "gpt图状态：查看队列与默认参数",
+                "gpt图中转状态：查看中转站池状态",
+                "gpt图切站 <relay-name|auto>：手动指定优先中转",
+                "gpt图恢复中转 <relay-name|all>：清除熔断状态",
+                "gpt图帮助：查看帮助",
+                "支持简繁英触发：gpt 繪圖 / gpt 改圖 / gpt image / edit image / gpt help / chatgpt status",
                 f"支持参数：{self._supported_options_text()}",
                 f"已移除参数：{self._removed_options_text()}",
-                "图生图支持：直接附图、回复图片、重复 --image、多图 image=a.png,b.png",
-                f"size 支持 auto 或任意 <宽>x<高>，例如 {self._HELP_SIZE_EXAMPLES}",
-                "固定走 Responses + image_generation + SSE；只发送最终成图",
+                "输入图支持：直接附图、回复图片、重复 --image、多图 image=a.png,b.png",
+                f"size 支持 auto 或 <宽>x<高>，例如 {self._HELP_SIZE_EXAMPLES}",
+                "固定使用 Responses + image_generation + SSE，仅回传最终成图",
             ],
             icon="📘",
         )

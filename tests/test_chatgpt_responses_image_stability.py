@@ -492,7 +492,7 @@ class PluginStabilityTests(unittest.TestCase):
 
         summary = plugin._brief_error(err)
         self.assertTrue(plugin._looks_like_retryable_server_error(err))
-        self.assertIn("上游服务端错误", summary)
+        self.assertIn("上游暂时不可用", summary)
         self.assertNotIn("help.openai.com", summary)
         self.assertNotIn("request ID", summary)
         self.assertNotIn("插件已按配置重试", summary)
@@ -640,18 +640,18 @@ class PluginStabilityTests(unittest.TestCase):
             self.assertNotIn("╰", sample)
             self.assertNotIn("⚠️", sample)
         self.assertIn("❌ 生图失败", samples[0])
-        self.assertIn("⏳ 已进入生图队列", samples[1])
-        self.assertIn("📘 ChatGPT Images 指令帮助", samples[-1])
+        self.assertIn("⏳ 已加入队列", samples[1])
+        self.assertIn("📘 ChatGPT Images 帮助", samples[-1])
 
     def test_queue_card_uses_concurrent_copy_when_parallel_enabled(self):
         plugin = self.make_plugin({"max_concurrency": 3})
 
         text = plugin._format_queue_card(2, concurrent=True)
 
-        self.assertIn("⏳ 已进入并发生图队列", text)
-        self.assertIn("当前前置任务 2 个", text)
-        self.assertIn("最大 3 个同时进行", text)
-        self.assertNotIn("按顺序执行", text)
+        self.assertIn("⏳ 已加入并发队列", text)
+        self.assertIn("前方待处理 2 个任务", text)
+        self.assertIn("最多 3 个任务同时处理", text)
+        self.assertNotIn("按顺序处理", text)
 
     def test_accepted_card_is_concise_and_plain(self):
         plugin = self.make_plugin()

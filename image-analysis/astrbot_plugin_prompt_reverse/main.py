@@ -874,12 +874,12 @@ class PromptReversePlugin(Star):
 
         providers = self.context.get_all_providers() or []
         if not providers:
-            yield event.plain_result("未找到可用的 AstrBot 模型提供商。")
+            yield event.plain_result("未找到可用的 AstrBot Provider。")
             return
 
         current = self.context.get_using_provider(umo=event.unified_msg_origin)
         current_id = self._provider_id(current)
-        lines = ["AstrBot 已配置模型（按 Provider 当前模型）:"]
+        lines = ["AstrBot 当前模型："]
         for idx, provider in enumerate(providers, start=1):
             pid = self._provider_id(provider)
             model = self._provider_model(provider) or "未配置模型"
@@ -896,9 +896,9 @@ class PromptReversePlugin(Star):
             return
         ok, msg = await self._auto_sync_model_options(force=True)
         if ok:
-            yield event.plain_result(f"模型下拉同步成功：{msg}")
+            yield event.plain_result(f"模型同步成功：{msg}")
         else:
-            yield event.plain_result(f"模型下拉同步失败：{msg}")
+            yield event.plain_result(f"模型同步失败：{msg}")
 
     @filter.command("prompt_reverse", alias={"pr"})
     async def prompt_reverse(self, event: AstrMessageEvent):
@@ -929,8 +929,8 @@ class PromptReversePlugin(Star):
         if not source:
             yield event.plain_result(
                 "未检测到图片。\\n"
-                "用法: /pr <图片URL或本地路径> [mode] [threshold]\\n"
-                "也可以：直接发送（或引用）一张图片，再发送 /pr 或 /wd_only /wd_llm /wd_visual"
+                "用法：pr <图片URL或本地路径> [mode] [threshold]\\n"
+                "也可直接发送图片，或回复带图消息后再发送 pr / wd_only / wd_llm / wd_visual"
             )
             return
 
@@ -940,11 +940,11 @@ class PromptReversePlugin(Star):
 
         image = await self._load_image(resolved_source)
         if image is None:
-            yield event.plain_result(f"读取图片失败: {source}")
+            yield event.plain_result("读取图片失败，请重新发送原图、改用可访问 URL，或检查本地路径。")
             return
 
         if self._tagger is None:
-            yield event.plain_result("插件未完成初始化")
+            yield event.plain_result("插件尚未完成初始化。")
             return
 
         try:
@@ -970,7 +970,7 @@ class PromptReversePlugin(Star):
             escape_parentheses=bool(self._cfg("escape_parentheses", True)),
         )
         if not wd_tags:
-            yield event.plain_result("WD反推失败：未获得标签")
+            yield event.plain_result("反推失败：未获得可用标签。")
             return
 
         final_tags = wd_tags
@@ -1652,4 +1652,4 @@ class PromptReversePlugin(Star):
         normalized = {str(x).strip() for x in allowed_ids if str(x).strip()}
         if sender_id in normalized:
             return None
-        return event.plain_result("当前用户无权限使用此插件。")
+        return event.plain_result("当前账号无权限使用该指令。")

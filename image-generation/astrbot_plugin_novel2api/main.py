@@ -127,7 +127,7 @@ class Novel2ApiPlugin(Star):
             self._format_card(
                 "插件状态",
                 [
-                    f"队列：待处理 {queue_wait} 个 · 最大等待 {max_queue_waiting}",
+                    f"队列：等待 {queue_wait} 个 · 排队上限 {max_queue_waiting}",
                     f"额度：{quota} · 免费模式：{'开启' if free_mode else '关闭'}",
                     f"频率限制：{rate_limit_desc}",
                     f"调试日志：{'开启' if self._debug_enabled() else '关闭'}",
@@ -156,7 +156,7 @@ class Novel2ApiPlugin(Star):
         yield event.plain_result(
             self._format_card(
                 "调试日志",
-                [f"当前状态：{'开启' if self._debug_enabled() else '关闭'}", "用法：/nai调试 开启|关闭"],
+                [f"当前状态：{'开启' if self._debug_enabled() else '关闭'}", "用法：nai调试 开启|关闭"],
                 icon="🛠️",
             )
         )
@@ -224,7 +224,7 @@ class Novel2ApiPlugin(Star):
         yield event.plain_result(
             self._format_card(
                 "自动画图",
-                [f"当前状态：{'开启' if status else '关闭'}", "用法：/nai自动画图 开启|关闭"],
+                [f"当前状态：{'开启' if status else '关闭'}", "用法：nai自动画图 开启|关闭"],
                 icon="🤖",
             )
         )
@@ -306,7 +306,7 @@ class Novel2ApiPlugin(Star):
     async def models_command(self, event: AstrMessageEvent):
         models = await self._get_image_models(force=False)
         if not models:
-            yield self._build_error_result(event, "模型获取失败", "未获取到可用生图模型，请先执行 /nai登录 或检查 api_key/access_key。")
+            yield self._build_error_result(event, "模型获取失败", "未获取到可用生图模型，请先执行 nai登录，或检查 api_key/access_key。")
             return
         current = str(self._cfg("default_model", "")).strip()
         preview = "\n".join(f"- {m}" for m in models[:80])
@@ -345,7 +345,7 @@ class Novel2ApiPlugin(Star):
             return
         models = await self._get_image_models(force=False)
         if models and target not in set(models):
-            yield self._build_error_result(event, "参数错误", "模型不在可选生图列表中，请先 /nai模型 查看。")
+            yield self._build_error_result(event, "参数错误", "模型不在可用生图列表中，请先执行 nai模型 查看。")
             return
         self.config["default_model"] = target
         saved = self._save_config()
@@ -400,7 +400,7 @@ class Novel2ApiPlugin(Star):
             return
         rest = self._rest_after_command(event.message_str).strip()
         if not rest:
-            yield self._build_error_result(event, "参数错误", "用法：/nai导演工具 <remove_bg|line_art|sketch|colorize|emotion|declutter> [--image 路径/URL]")
+            yield self._build_error_result(event, "参数错误", "用法：nai导演工具 <remove_bg|line_art|sketch|colorize|emotion|declutter> [--image 路径/URL]")
             return
         try:
             argv = shlex.split(rest)
@@ -416,7 +416,7 @@ class Novel2ApiPlugin(Star):
             refs = await self._collect_event_image_refs(event)
             image_ref = refs[0] if refs else ""
         if not image_ref:
-            yield self._build_error_result(event, "读取输入图片失败", "请附带一张图片，或使用 --image 指定图片路径/URL。")
+            yield self._build_error_result(event, "读取输入图片失败", "请附带一张图片，或用 --image 指定图片路径 / URL。")
             return
         token_ok, token, token_err = await self._resolve_auth_token()
         if not token_ok:
@@ -424,7 +424,7 @@ class Novel2ApiPlugin(Star):
             return
         image_bytes = await self._load_image_bytes_for_event(event, image_ref)
         if image_bytes is None:
-            yield self._build_error_result(event, "读取输入图片失败", "输入图片已失效或当前环境无法访问原图，请重新发送原图后再试。")
+            yield self._build_error_result(event, "读取输入图片失败", "输入图片已失效或当前环境无法访问，请重新发送原图后再试。")
             return
         body = msgpack.packb({"req_type": tool, "image": image_bytes}, use_bin_type=True)
         ok, data, err = await self._request_bytes("POST", self._image_base() + "/ai/augment-image", token, body, "application/msgpack")
@@ -486,7 +486,7 @@ class Novel2ApiPlugin(Star):
             return
         image_bytes = await self._load_image_bytes_for_event(event, image_ref)
         if image_bytes is None:
-            yield self._build_error_result(event, "读取输入图片失败", "输入图片已失效或当前环境无法访问原图，请重新发送原图后再试。")
+            yield self._build_error_result(event, "读取输入图片失败", "输入图片已失效或当前环境无法访问，请重新发送原图后再试。")
             return
         payload: dict[str, Any] = {
             "image": image_bytes,
@@ -560,7 +560,7 @@ class Novel2ApiPlugin(Star):
                     break
             if input_image_bytes is None:
                 self._debug("image_ref_all_failed")
-                return [self._build_error_result(event, "读取输入图片失败", "输入图片已失效或当前环境无法访问原图，请重新发送原图后再试。")]
+                return [self._build_error_result(event, "读取输入图片失败", "输入图片已失效或当前环境无法访问，请重新发送原图后再试。")]
             src_size = self._image_size_from_bytes(input_image_bytes)
             if src_size is not None:
                 width, height = self._nearest_fixed_size(src_size[0], src_size[1])
@@ -965,10 +965,10 @@ class Novel2ApiPlugin(Star):
 
     def _format_queue_card(self, wait_num: int) -> str:
         return self._format_card(
-            "已进入生图队列",
+            "已加入队列",
             [
                 f"前方还有 {wait_num} 个任务",
-                "插件会按顺序执行，完成后只发送最终成图",
+                "按顺序处理，仅回传最终成图",
             ],
             icon="⏳",
         )
@@ -1019,7 +1019,7 @@ class Novel2ApiPlugin(Star):
         lines = [
             "✅ 图像生成完成",
             f"模型：{model}",
-            f"模式：{action_name} · 尺寸：{width}×{height} · 数量：{requested_count} 张",
+            f"任务：{action_name} · 尺寸：{width}×{height} · 数量：{requested_count} 张",
         ]
         detail_parts = [f"steps={steps}", f"scale={scale}"]
         if sampler:
@@ -1031,7 +1031,7 @@ class Novel2ApiPlugin(Star):
         if noise is not None:
             detail_parts.append(f"noise={noise}")
         detail_parts.append(f"耗时={elapsed:.2f}s")
-        lines.append(f"参数：{' · '.join(detail_parts)}")
+        lines.append(f"详情：{' · '.join(detail_parts)}")
         return "\n".join(lines)
 
     def _split_first_line(self, text: str) -> tuple[str, str]:
@@ -1815,7 +1815,7 @@ class Novel2ApiPlugin(Star):
         return (self._FIXED_SIZES[d], "") if d in self._FIXED_SIZES else (self._FIXED_SIZES["square"], "")
 
     def _size_help_text(self) -> str:
-        return "仅支持固定尺寸：Portrait(832x1216)、Landscape(1216x832)、Square(1024x1024)。可用 --size portrait|landscape|square（或 竖图/横图/方图）。"
+        return "仅支持三种固定尺寸：Portrait(832x1216)、Landscape(1216x832)、Square(1024x1024)。可用 --size portrait|landscape|square，或 竖图/横图/方图。"
 
     def _extract_opt_value(self, argv: list[str], name: str) -> str:
         for i, token in enumerate(argv):
@@ -2101,21 +2101,21 @@ class Novel2ApiPlugin(Star):
 
     def _help_text(self) -> str:
         return self._format_card(
-            "NovelAI 指令帮助",
+            "NovelAI 帮助",
             [
-                "nai <tag prompt>：基础模式",
+                "nai <tag prompt>：基础标签模式",
                 "nai画图 <自然语言>：智能模式（LLM 转标签）",
-                "nai绘画横图 / nai绘画竖图 / nai绘画方图 <自然语言>",
-                "nai自动画图 开启|关闭（管理员）",
-                "nai登录 / nai模型 / nai采样器 / nai切换模型 / nai同步模型",
+                "nai绘画横图 / nai绘画竖图 / nai绘画方图 <自然语言>：固定尺寸快捷绘图",
+                "nai自动画图 开启|关闭：自动模式（管理员）",
+                "nai登录 / nai模型 / nai采样器 / nai切换模型 / nai同步模型：账号与模型管理",
                 "nai生图 <prompt> [--model m] [--negative n] [--size portrait|landscape|square|竖图|横图|方图] [--steps 28] [--scale 5] [--sampler s] [--seed 1] [--n 1]",
-                "nai图生图 / nai导演工具 / nai编码参考图（管理员）",
-                "nai签到 / nai额度 / nai状态",
+                "nai图生图 / nai导演工具 / nai编码参考图：高级图片功能（管理员）",
+                "nai签到 / nai额度 / nai状态：额度与运行状态",
                 "nai预设保存 <名称> <内容> / nai预设列表 / nai预设删除 <名称>",
                 "固定尺寸：Portrait(832x1216) · Landscape(1216x832) · Square(1024x1024)",
-                "附图规则：带图会自动匹配到最接近的固定尺寸后再提交，避免大图消耗。",
-                "说明：--n 会拆成多个任务进入队列，按顺序逐张生成。",
-                "权限：仅管理员可自定义分辨率和全部功能；其他用户仅允许不消耗路径。",
+                "附图会自动匹配到最接近的固定尺寸，避免大图额外消耗。",
+                "--n 会拆成多个任务进入队列，按顺序逐张生成。",
+                "仅管理员可自定义分辨率并使用全部功能；其他用户仅允许免费路径。",
             ],
             icon="📘",
         )
@@ -2138,7 +2138,7 @@ class Novel2ApiPlugin(Star):
     def _deny_if_not_admin(self, event: AstrMessageEvent, action: str):
         if self._is_admin_user(event):
             return None
-        return self._build_error_result(event, "无权限使用", f"{action} 仅管理员可用。")
+        return self._build_error_result(event, "无权限", f"{action} 仅管理员可用。")
 
     def _debug_enabled(self) -> bool:
         return bool(self._cfg("debug", False))

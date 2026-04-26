@@ -374,7 +374,7 @@ class ShironGatewayPlugin(Star):
     async def _handle_models(self, event: AstrMessageEvent) -> list[Any]:
         ok, payload, err = await self._request_json("GET", "/v1/models")
         if not ok:
-            return [event.plain_result(f"获取模型失败：{err}")]
+            return [event.plain_result(f"读取模型列表失败：{err}")]
         models = payload.get("data", [])
         names = [m.get("id", "<unknown>") for m in models if isinstance(m, dict)]
         if not names:
@@ -390,7 +390,7 @@ class ShironGatewayPlugin(Star):
         curr_rerank = str(self._cfg("rerank_model", ""))
         msg = (
             f"模型总数：{len(names)}\n"
-            f"当前配置：\nchat={curr_chat}\nresponses={curr_resp}\ncompletions={curr_comp}\nembed={curr_embed}\nimage={curr_img}\nvideo={curr_video}\nmoderation={curr_mod}\nrerank={curr_rerank}\n\n"
+            f"当前默认模型：\nchat={curr_chat}\nresponses={curr_resp}\ncompletions={curr_comp}\nembed={curr_embed}\nimage={curr_img}\nvideo={curr_video}\nmoderation={curr_mod}\nrerank={curr_rerank}\n\n"
             f"LLM ({len(llm)}):\n{self._join_or_none(llm)}\n\n"
             f"IMAGE ({len(image)}):\n{self._join_or_none(image)}\n\n"
             f"VIDEO ({len(video)}):\n{self._join_or_none(video)}"
@@ -403,8 +403,8 @@ class ShironGatewayPlugin(Star):
         if len(argv) < 2:
             return [
                 event.plain_result(
-                    "用法：/切换模型 <模型id> [能力]\n"
-                    "能力可选：chat/responses/completions/embed/image/video/moderate/rerank/text/all"
+                    "用法：切换模型 <模型id> [能力]\n"
+                    "能力可选：chat / responses / completions / embed / image / video / moderate / rerank / text / all"
                 )
             ]
 
@@ -413,7 +413,7 @@ class ShironGatewayPlugin(Star):
 
         model_set, classify_msg = await self._fetch_model_set()
         if model_set is not None and model_id not in model_set:
-            return [event.plain_result(f"模型不存在：{model_id}\n请先执行 /模型 查看可用模型。")]
+            return [event.plain_result(f"模型不存在：{model_id}\n请先执行 模型 查看可用列表。")]
 
         if not capability:
             model_kind = self._classify_model(model_id)
@@ -482,13 +482,13 @@ class ShironGatewayPlugin(Star):
     async def _handle_sync_models(self, event: AstrMessageEvent) -> list[Any]:
         ok, msg = await self._auto_sync_model_options(force=True)
         if ok:
-            return [event.plain_result(f"模型列表同步成功：{msg}")]
-        return [event.plain_result(f"模型列表同步失败：{msg}")]
+            return [event.plain_result(f"模型同步成功：{msg}")]
+        return [event.plain_result(f"模型同步失败：{msg}")]
 
     async def _handle_chat(self, event: AstrMessageEvent, prompt: str) -> list[Any]:
         image_urls = await self._collect_event_image_urls(event)
         if not prompt and not image_urls:
-            return [event.plain_result("用法：/对话 <prompt>（可附带图片）")]
+            return [event.plain_result("用法：对话 <prompt>（可附图）")]
 
 
         message = self._build_chat_user_message(prompt=prompt, image_urls=image_urls)
@@ -511,7 +511,7 @@ class ShironGatewayPlugin(Star):
     ) -> list[Any]:
         image_urls = await self._collect_event_image_urls(event)
         if not prompt and not image_urls:
-            return [event.plain_result("用法：/响应 <prompt>（可附带图片）")]
+            return [event.plain_result("用法：响应 <prompt>（可附图）")]
 
         payload: dict[str, Any] = {
             "model": self._cfg("responses_model", self._cfg("chat_model", "gpt-4o-mini")),
@@ -528,7 +528,7 @@ class ShironGatewayPlugin(Star):
         self, event: AstrMessageEvent, prompt: str
     ) -> list[Any]:
         if not prompt:
-            return [event.plain_result("用法：/补全 <prompt>")]
+            return [event.plain_result("用法：补全 <prompt>")]
         payload: dict[str, Any] = {
             "model": self._cfg("completions_model", self._cfg("chat_model", "gpt-4o-mini")),
             "prompt": prompt,
@@ -544,7 +544,7 @@ class ShironGatewayPlugin(Star):
 
     async def _handle_embeddings(self, event: AstrMessageEvent, text: str) -> list[Any]:
         if not text:
-            return [event.plain_result("用法：/向量 <text>")]
+            return [event.plain_result("用法：向量 <text>")]
         payload = {
             "model": self._cfg("embedding_model", "text-embedding-3-small"),
             "input": text,
@@ -565,10 +565,10 @@ class ShironGatewayPlugin(Star):
         prompt, img_opts = self._parse_image_generation_options(prompt)
         image_urls = await self._collect_event_image_urls(event)
         if not prompt and not image_urls:
-            return [event.plain_result("用法：/生图 <prompt>（可附带图片做图生图）")]
+            return [event.plain_result("用法：生图 <prompt>（可附图做图生图）")]
         model = await self._resolve_image_model(prompt, image_urls, img_opts)
         if self._classify_model(model) == "video":
-            return [event.plain_result(f"当前选择的是视频模型：{model}。为避免误扣视频积分，已阻止本次生图，请改用 /视频 系列指令。")]
+            return [event.plain_result(f"当前模型 {model} 属于视频模型。为避免误扣视频额度，已阻止本次生图；请改用 视频 系列指令。")]
         size = self._resolve_image_size(model, img_opts)
 
         # 有参考图时优先走多模态 chat/completions（text + image_url），兼容图生图模型。
@@ -600,10 +600,10 @@ class ShironGatewayPlugin(Star):
                 if block_reason:
                     return [event.plain_result(f"图生图失败：{block_reason}")]
                 if self._is_stream_required_hint(text):
-                    return [event.plain_result("图生图失败：未获取到图片结果")]
+                    return [event.plain_result("图生图失败：未返回图片结果。")]
                 if text:
-                    return [event.plain_result("图生图失败：未获取到图片结果")]
-                return [event.plain_result("图生图失败：未获取到图片结果")]
+                    return [event.plain_result("图生图失败：未返回图片结果。")]
+                return [event.plain_result("图生图失败：未返回图片结果。")]
 
             block_reason = self._extract_image_upload_block_reason(f"{detail}\n{chat_err}")
             if block_reason:
@@ -643,7 +643,7 @@ class ShironGatewayPlugin(Star):
     async def _handle_image_to_image(self, event: AstrMessageEvent, prompt: str) -> list[Any]:
         image_urls = await self._collect_event_image_urls(event)
         if not image_urls:
-            return [event.plain_result("用法：/图生图 <prompt>（必须附带图片或引用含图消息）")]
+            return [event.plain_result("用法：图生图 <prompt>（需附图或回复带图消息）")]
         return await self._handle_image(event, prompt)
 
     async def _handle_video(self, event: AstrMessageEvent, prompt: str, force_mode: str = "") -> list[Any]:
@@ -660,13 +660,13 @@ class ShironGatewayPlugin(Star):
             image_urls = image_urls[:3]
 
         if force_mode == "i2v" and not image_urls:
-            return [event.plain_result("用法：/图生视频 <prompt>（需附带至少1张图片）")]
+            return [event.plain_result("用法：图生视频 <prompt>（至少附 1 张图）")]
         if force_mode == "i2v_2f" and len(image_urls) < 2:
-            return [event.plain_result("用法：/首尾帧视频 <prompt>（需附带2张图片）")]
+            return [event.plain_result("用法：首尾帧视频 <prompt>（需附 2 张图）")]
         if force_mode == "r2v" and len(image_urls) < 3:
-            return [event.plain_result("用法：/多图视频 <prompt>（需附带至少3张图片）")]
+            return [event.plain_result("用法：多图视频 <prompt>（至少附 3 张图）")]
         if not prompt and not image_urls:
-            return [event.plain_result("用法：/视频 <prompt>（可附图，自动图生视频）")]
+            return [event.plain_result("用法：视频 <prompt>（可附图，自动切换图生视频）")]
 
         if not prompt:
             prompt = "根据输入图片生成连贯视频。"
@@ -879,7 +879,7 @@ class ShironGatewayPlugin(Star):
     def _video_info_text(self, t0: float, model: str, mode: str) -> str:
         elapsed = time.perf_counter() - t0
         label = {"t2v": "文生视频", "i2v": "图生视频", "r2v": "多图视频"}.get(mode, "视频生成")
-        return f"生成完成 | {label} | 模型: {model} | 耗时: {elapsed:.2f}s"
+        return f"生成完成｜{label}｜模型 {model}｜耗时 {elapsed:.2f}s"
 
     def _video_chain_result(self, event: AstrMessageEvent, video_ref: str, info: str):
         if video_ref.startswith("http://") or video_ref.startswith("https://"):
@@ -898,7 +898,7 @@ class ShironGatewayPlugin(Star):
 
     def _image_info_text(self, t0: float, model: str, mode: str, channel: str) -> str:
         elapsed = time.perf_counter() - t0
-        return f"生成完成 | {mode} | 模型: {model} | 通道: {channel} | 耗时: {elapsed:.2f}s"
+        return f"生成完成｜{mode}｜模型 {model}｜通道 {channel}｜耗时 {elapsed:.2f}s"
 
     def _image_chain_result(self, event: AstrMessageEvent, image_ref: str, info: str):
         normalized = self._materialize_image_data_url(image_ref)
@@ -1374,7 +1374,7 @@ class ShironGatewayPlugin(Star):
         self, event: AstrMessageEvent, text: str
     ) -> list[Any]:
         if not text:
-            return [event.plain_result("用法：/审核 <text>")]
+            return [event.plain_result("用法：审核 <text>")]
         payload = {
             "model": self._cfg("moderation_model", "omni-moderation-latest"),
             "input": text,
@@ -1390,7 +1390,7 @@ class ShironGatewayPlugin(Star):
         if len(argv) < 3:
             return [
                 event.plain_result(
-                    "用法：/重排 <query> <docs_json_array>\n"
+                    "用法：重排 <query> <docs_json_array>\n"
                     '示例：/重排 "what is astrbot" "[\\"doc1\\", \\"doc2\\"]"'
                 )
             ]
@@ -1422,7 +1422,7 @@ class ShironGatewayPlugin(Star):
 
     async def _handle_raw(self, event: AstrMessageEvent, argv: list[str]) -> list[Any]:
         if len(argv) < 3:
-            return [event.plain_result("用法：/原始 <METHOD> <PATH> [JSON_BODY]")]
+            return [event.plain_result("用法：原始 <METHOD> <PATH> [JSON_BODY]")]
         method = argv[1].upper()
         path = argv[2]
         body = None
@@ -1445,7 +1445,7 @@ class ShironGatewayPlugin(Star):
         if len(argv) < 5:
             return [
                 event.plain_result(
-                    "用法：/上传 <METHOD> <PATH> <FILE_FIELD> <FILE_PATH_OR_URL> [FORM_JSON]"
+                    "用法：上传 <METHOD> <PATH> <FILE_FIELD> <FILE_PATH_OR_URL> [FORM_JSON]"
                 )
             ]
 
@@ -1485,7 +1485,7 @@ class ShironGatewayPlugin(Star):
         self, event: AstrMessageEvent, argv: list[str]
     ) -> list[Any]:
         if len(argv) < 2:
-            return [event.plain_result("用法：/下载 <PATH> [SAVE_NAME]")]
+            return [event.plain_result("用法：下载 <PATH> [SAVE_NAME]")]
         path = argv[1]
         save_name = argv[2] if len(argv) > 2 else None
         resp, err = await self._request("GET", path)
@@ -1499,11 +1499,11 @@ class ShironGatewayPlugin(Star):
         if "application/json" in ctype:
             return self._render_response(event, resp)
         out = self._save_binary_response(resp, save_name=save_name)
-        return [event.plain_result(f"下载完成：{out}")]
+        return [event.plain_result(f"下载完成，已保存到：{out}")]
 
     async def _handle_api_command(self, event: AstrMessageEvent, argv: list[str]) -> list[Any]:
         if len(argv) < 2:
-            return [event.plain_result("用法：/接口 <列表|调用|刷新> ...")]
+            return [event.plain_result("用法：接口 <列表|调用|刷新> ...")]
 
         action = self._normalize_sub(argv[1])
         if action in {"刷新", "refresh"}:
@@ -1525,7 +1525,7 @@ class ShironGatewayPlugin(Star):
             return [event.plain_result(f"读取接口列表失败：{msg}")]
         items = self._search_openapi_endpoints(keyword)
         if not items:
-            return [event.plain_result(f"未找到接口：{keyword}")]
+            return [event.plain_result(f"未找到匹配接口：{keyword}")]
         lines = [f"{i + 1}. {ep['method']} {ep['path']} | {ep['name']}" for i, ep in enumerate(items[:60])]
         suffix = f"\n... 还有 {len(items) - 60} 个" if len(items) > 60 else ""
         return [
@@ -2224,39 +2224,40 @@ class ShironGatewayPlugin(Star):
     def _help_text(self) -> str:
         return (
             "NewAPI 智能网关\n"
-            "（填写 base_url 与 api_key 后，会自动同步模型和接口目录）\n"
-            "中文指令：\n"
-            "- /帮助\n"
-            "- /模型\n"
-            "- /切换模型 <模型id> [能力]\n"
-            "- /同步模型\n"
-            "- /对话 <prompt>\n"
-            "- /响应 <prompt>\n"
-            "- /补全 <prompt>\n"
-            "- /向量 <text>\n"
-            "- /生图 <prompt>\n"
-            "- /图生图 <prompt>（需附图）\n"
+            "配置好 base_url 与 api_key 后，插件会自动同步模型与接口目录。\n"
+            "\n"
+            "可用指令：\n"
+            "- 帮助\n"
+            "- 模型\n"
+            "- 切换模型 <模型id> [能力]\n"
+            "- 同步模型\n"
+            "- 对话 <prompt>\n"
+            "- 响应 <prompt>\n"
+            "- 补全 <prompt>\n"
+            "- 向量 <text>\n"
+            "- 生图 <prompt>\n"
+            "- 图生图 <prompt>（需附图）\n"
             "  参数：--模型 <id> | --系列 <auto|pro|banana2|imagen4> | --横屏 | --竖屏 | --比例 <16:9>\n"
-            "  简写：/生图 bananapro 横屏 你的提示词\n"
-            "- /视频 <prompt>（可附图自动图生视频）\n"
-            "- /图生视频 <prompt>（需1张图）\n"
-            "- /首尾帧视频 <prompt>（需2张图）\n"
-            "- /多图视频 <prompt>（需3张图）\n"
+            "  简写：生图 bananapro 横屏 你的提示词\n"
+            "- 视频 <prompt>（可附图，自动切换图生视频）\n"
+            "- 图生视频 <prompt>（需 1 张图）\n"
+            "- 首尾帧视频 <prompt>（需 2 张图）\n"
+            "- 多图视频 <prompt>（需 3 张图）\n"
             "  参数：--模型 <id> | --模式 <t2v|i2v|r2v> | --横屏 | --竖屏 | --4k | --1080p | --ultra | --relaxed\n"
-            "  简写：/视频 t2v 横屏 4k 你的提示词\n"
-            "- /审核 <text>\n"
-            '- /重排 "<query>" "<json_array_docs>"\n'
-            "- /接口 列表 [关键字]\n"
-            "- /接口 调用 <METHOD> <PATH> [JSON_BODY]\n"
-            "- /接口 调用 <接口关键字> [JSON_BODY]\n"
-            "- /接口 刷新\n"
-            "- /原始 <METHOD> <PATH> [JSON_BODY]\n"
-            "- /上传 <METHOD> <PATH> <FILE_FIELD> <FILE_PATH_OR_URL> [FORM_JSON]\n"
-            "- /下载 <PATH> [SAVE_NAME]\n"
+            "  简写：视频 t2v 横屏 4k 你的提示词\n"
+            "- 审核 <text>\n"
+            '- 重排 "<query>" "<json_array_docs>"\n'
+            "- 接口 列表 [关键字]\n"
+            "- 接口 调用 <METHOD> <PATH> [JSON_BODY]\n"
+            "- 接口 调用 <接口关键字> [JSON_BODY]\n"
+            "- 接口 刷新\n"
+            "- 原始 <METHOD> <PATH> [JSON_BODY]\n"
+            "- 上传 <METHOD> <PATH> <FILE_FIELD> <FILE_PATH_OR_URL> [FORM_JSON]\n"
+            "- 下载 <PATH> [SAVE_NAME]\n"
             "\n"
             "示例：\n"
-            "- /接口 列表 音频\n"
-            '- /接口 调用 POST /v1/chat/completions "{\\"model\\":\\"gpt-4o-mini\\",\\"messages\\":[{\\"role\\":\\"user\\",\\"content\\":\\"hi\\"}]}"'
+            "- 接口 列表 音频\n"
+            '- 接口 调用 POST /v1/chat/completions "{\\"model\\":\\"gpt-4o-mini\\",\\"messages\\":[{\\"role\\":\\"user\\",\\"content\\":\\"hi\\"}]}"'
         )
 
     def _split_models(self, names: list[str]) -> tuple[list[str], list[str], list[str]]:
@@ -2435,7 +2436,7 @@ class ShironGatewayPlugin(Star):
         normalized = {str(x).strip() for x in allowed_ids if str(x).strip()}
         if sender_id in normalized:
             return None
-        return event.plain_result("当前用户无权限使用此插件。")
+        return event.plain_result("当前账号无权限使用该指令。")
 
     def _is_public_command(self, command_name: str) -> bool:
         raw = self._cfg("public_commands", [])
