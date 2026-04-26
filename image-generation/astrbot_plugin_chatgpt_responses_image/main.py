@@ -64,6 +64,13 @@ class RelayEndpointConfig:
     max_concurrency: int = 0
 
 
+@dataclass
+class QueueScopeState:
+    semaphore: asyncio.Semaphore
+    waiting: int = 0
+    running: int = 0
+
+
 @register(
     "astrbot_plugin_chatgpt_responses_image",
     "午时五十五",
@@ -225,8 +232,8 @@ class ChatGPTResponsesImagePlugin(Star):
         self.config = config or {}
         self._max_concurrency = max(1, int(self._cfg("max_concurrency", 1)))
         self._max_queue_waiting = max(0, int(self._cfg("max_queue_waiting", 20)))
-        self._queue_semaphore = asyncio.Semaphore(self._max_concurrency)
         self._queue_state_lock = asyncio.Lock()
+        self._queue_scopes: dict[str, QueueScopeState] = {}
         self._queue_waiting = 0
         self._queue_running = 0
         self._background_tasks: set[asyncio.Task] = set()
@@ -329,21 +336,28 @@ class ChatGPTResponsesImagePlugin(Star):
             yield event.plain_result(self._help_text())
             return
         if action == "status":
+            scope_key = self._queue_scope_key(event)
             async with self._queue_state_lock:
-                queue_wait = max(0, self._queue_waiting)
-                queue_running = max(0, self._queue_running)
+                scope_state = self._queue_scopes.get(scope_key)
+                queue_wait = max(0, scope_state.waiting if scope_state else 0)
+                queue_running = max(0, scope_state.running if scope_state else 0)
+                total_wait = max(0, self._queue_waiting)
+                total_running = max(0, self._queue_running)
             allow_partial = "开启" if self._to_bool(self._cfg("allow_partial_fallback", True), True) else "关闭"
             relay_summary = self._summarize_relays_for_status()
+            lines = [
+                f"队列：当前会话等待 {queue_wait} 个 · 运行 {queue_running} 个",
+                f"上限：单会话并发 {self._max_concurrency} · 排队 {self._max_queue_waiting}",
+                f"默认：{self._cfg('default_model', 'gpt-5.4')} · {self._display_size(str(self._cfg('default_size', '1024x1024')))} · {self._display_output_format(str(self._cfg('default_output_format', 'png')))}",
+                relay_summary,
+                f"协议：Responses SSE · partial 回退 {allow_partial}",
+            ]
+            if total_wait != queue_wait or total_running != queue_running:
+                lines.insert(1, f"全局：等待 {total_wait} 个 · 运行 {total_running} 个")
             yield event.plain_result(
                 self._format_card(
                     "插件状态",
-                    [
-                        f"队列：等待 {queue_wait} 个 · 运行 {queue_running} 个",
-                        f"上限：并发 {self._max_concurrency} · 排队 {self._max_queue_waiting}",
-                        f"默认：{self._cfg('default_model', 'gpt-5.4')} · {self._display_size(str(self._cfg('default_size', '1024x1024')))} · {self._display_output_format(str(self._cfg('default_output_format', 'png')))}",
-                        relay_summary,
-                        f"协议：Responses SSE · partial 回退 {allow_partial}",
-                    ],
+                    lines,
                     icon="🧩",
                 )
             )
@@ -464,7 +478,8 @@ class ChatGPTResponsesImagePlugin(Star):
                 )
                 return
 
-        ok_slot, wait_num = await self._reserve_queue_slot()
+        queue_scope = self._queue_scope_key(event)
+        ok_slot, wait_num = await self._reserve_queue_slot(queue_scope)
         if not ok_slot:
             yield self._build_error_result(
                 event,
@@ -491,6 +506,7 @@ class ChatGPTResponsesImagePlugin(Star):
                 request_opts=request_opts,
                 action=action,
                 input_images=input_images,
+                queue_scope=queue_scope,
             )
         )
         self._background_tasks.add(task)
@@ -506,9 +522,10 @@ class ChatGPTResponsesImagePlugin(Star):
         request_opts: dict[str, Any],
         action: str,
         input_images: list[InputImage],
+        queue_scope: str,
     ) -> None:
         try:
-            await self._wait_for_reserved_queue_slot()
+            await self._wait_for_reserved_queue_slot(queue_scope)
             t0 = time.perf_counter()
             payload = self._build_responses_payload(
                 prompt=prompt,
@@ -564,7 +581,7 @@ class ChatGPTResponsesImagePlugin(Star):
             except Exception:
                 pass
         finally:
-            await self._release_queue_ticket()
+            await self._release_queue_ticket(queue_scope)
 
     async def _send_message_result(self, event: AstrMessageEvent, result: Any) -> None:
         if hasattr(event, "send"):
@@ -1716,24 +1733,57 @@ class ChatGPTResponsesImagePlugin(Star):
             return True
         return False
 
-    async def _reserve_queue_slot(self) -> tuple[bool, int]:
+    def _queue_scope_key(self, event: AstrMessageEvent | None) -> str:
+        if event is None:
+            return "global"
+        group_id = self._event_group_id(event)
+        if group_id:
+            return f"group:{group_id}"
+        origin = str(getattr(event, "unified_msg_origin", "") or "").strip()
+        if origin:
+            return f"origin:{origin}"
+        sender_id = self._event_sender_id(event)
+        if sender_id:
+            return f"sender:{sender_id}"
+        return "global"
+
+    def _new_queue_scope_state(self) -> QueueScopeState:
+        return QueueScopeState(semaphore=asyncio.Semaphore(self._max_concurrency))
+
+    async def _reserve_queue_slot(self, scope_key: str) -> tuple[bool, int]:
         async with self._queue_state_lock:
-            if self._queue_running >= self._max_concurrency and self._queue_waiting >= self._max_queue_waiting:
-                return False, self._queue_waiting
-            wait_num = self._queue_running + self._queue_waiting
+            state = self._queue_scopes.setdefault(scope_key, self._new_queue_scope_state())
+            if state.running >= self._max_concurrency and state.waiting >= self._max_queue_waiting:
+                return False, state.waiting
+            wait_num = state.running + state.waiting
+            state.waiting += 1
             self._queue_waiting += 1
         return True, wait_num
 
-    async def _wait_for_reserved_queue_slot(self) -> None:
-        await self._queue_semaphore.acquire()
+    async def _wait_for_reserved_queue_slot(self, scope_key: str) -> None:
         async with self._queue_state_lock:
+            state = self._queue_scopes.setdefault(scope_key, self._new_queue_scope_state())
+            semaphore = state.semaphore
+        await semaphore.acquire()
+        async with self._queue_state_lock:
+            state = self._queue_scopes.setdefault(scope_key, self._new_queue_scope_state())
+            state.waiting = max(0, state.waiting - 1)
+            state.running += 1
             self._queue_waiting = max(0, self._queue_waiting - 1)
             self._queue_running += 1
 
-    async def _release_queue_ticket(self) -> None:
+    async def _release_queue_ticket(self, scope_key: str) -> None:
+        semaphore: asyncio.Semaphore | None = None
         async with self._queue_state_lock:
+            state = self._queue_scopes.get(scope_key)
+            if state is not None:
+                state.running = max(0, state.running - 1)
+                semaphore = state.semaphore
+                if state.running == 0 and state.waiting == 0:
+                    self._queue_scopes.pop(scope_key, None)
             self._queue_running = max(0, self._queue_running - 1)
-        self._queue_semaphore.release()
+        if semaphore is not None:
+            semaphore.release()
 
     async def _load_input_images_for_event(
         self,

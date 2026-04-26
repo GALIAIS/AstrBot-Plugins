@@ -1193,6 +1193,98 @@ class PluginStabilityTests(unittest.TestCase):
         self.assertEqual(started_count, 2)
         self.assertEqual(running, 2)
 
+    def test_different_groups_use_independent_queue_scopes(self):
+        plugin = self.make_plugin({"api_key": "test", "max_concurrency": 1})
+        started = 0
+        release = asyncio.Event()
+
+        class Event:
+            def __init__(self, group_id):
+                self.group_id = group_id
+            async def send(self, result):
+                pass
+            def plain_result(self, text):
+                return ("plain", text)
+            def chain_result(self, chain):
+                return ("chain", chain)
+
+        async def fake_request(**kwargs):
+            nonlocal started
+            started += 1
+            await release.wait()
+            result = self.module.ImageAPIResult(
+                images=[self.module.OutputImage(data=PNG_1X1, mime_type="image/png")],
+                size="1024x1024",
+                output_format="png",
+            )
+            return True, result, ""
+
+        async def drain(gen):
+            return [item async for item in gen]
+
+        async def scenario():
+            plugin._request_responses_api = fake_request
+            await asyncio.gather(
+                drain(plugin._handle_request(Event("10001"), "cat 1", {}, "generate")),
+                drain(plugin._handle_request(Event("10002"), "cat 2", {}, "generate")),
+            )
+            await asyncio.sleep(0.05)
+            running = plugin._queue_running
+            release.set()
+            await asyncio.gather(*list(plugin._background_tasks))
+            return running, started
+
+        running, started_count = asyncio.run(scenario())
+
+        self.assertEqual(started_count, 2)
+        self.assertEqual(running, 2)
+
+    def test_same_group_still_shares_one_queue_scope(self):
+        plugin = self.make_plugin({"api_key": "test", "max_concurrency": 1})
+        started = 0
+        release = asyncio.Event()
+
+        class Event:
+            def __init__(self, group_id):
+                self.group_id = group_id
+            async def send(self, result):
+                pass
+            def plain_result(self, text):
+                return ("plain", text)
+            def chain_result(self, chain):
+                return ("chain", chain)
+
+        async def fake_request(**kwargs):
+            nonlocal started
+            started += 1
+            await release.wait()
+            result = self.module.ImageAPIResult(
+                images=[self.module.OutputImage(data=PNG_1X1, mime_type="image/png")],
+                size="1024x1024",
+                output_format="png",
+            )
+            return True, result, ""
+
+        async def drain(gen):
+            return [item async for item in gen]
+
+        async def scenario():
+            plugin._request_responses_api = fake_request
+            await asyncio.gather(
+                drain(plugin._handle_request(Event("10001"), "cat 1", {}, "generate")),
+                drain(plugin._handle_request(Event("10001"), "cat 2", {}, "generate")),
+            )
+            await asyncio.sleep(0.05)
+            running = plugin._queue_running
+            release.set()
+            await asyncio.gather(*list(plugin._background_tasks))
+            return running, started
+
+        running, started_count = asyncio.run(scenario())
+
+        self.assertEqual(started_count, 2)
+        self.assertEqual(running, 1)
+
     def test_concurrent_requests_use_distinct_session_ids(self):
         plugin = self.make_plugin({"api_key": "test", "max_concurrency": 3, "session_id": "shared-prefix"})
         seen_session_ids = []
