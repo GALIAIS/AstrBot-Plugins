@@ -99,8 +99,10 @@ def load_plugin_module():
 
 
 class Event:
-    def __init__(self, sender_id: str = "123456"):
+    def __init__(self, sender_id: str = "123456", group_id: str | None = None, origin: str = ""):
         self._sender_id = sender_id
+        self.group_id = group_id
+        self.unified_msg_origin = origin
         self.message_str = "nai生图 cat"
 
     def get_sender_id(self):
@@ -140,6 +142,27 @@ class Novel2ApiStabilityTests(unittest.TestCase):
             "admin_user_ids": ["123456"],
         })
         self.assertTrue(plugin._is_sender_allowed(Event("123456")))
+
+    def test_group_blacklist_is_silent(self):
+        plugin = self.make_plugin({"group_blacklist": ["888888"]})
+        self.assertFalse(plugin._is_sender_allowed(Event("123456", group_id="888888")))
+
+    def test_group_whitelist_blocks_other_groups(self):
+        plugin = self.make_plugin({"group_whitelist": ["888888"]})
+        self.assertFalse(plugin._is_sender_allowed(Event("123456", group_id="777777")))
+        self.assertTrue(plugin._is_sender_allowed(Event("123456", group_id="888888")))
+
+    def test_admin_bypasses_group_lists(self):
+        plugin = self.make_plugin({
+            "group_blacklist": ["888888"],
+            "group_whitelist": ["999999"],
+            "admin_user_ids": ["123456"],
+        })
+        self.assertTrue(plugin._is_sender_allowed(Event("123456", group_id="888888")))
+
+    def test_group_id_can_be_extracted_from_origin(self):
+        plugin = self.make_plugin({"group_blacklist": ["888888"]})
+        self.assertFalse(plugin._is_sender_allowed(Event("123456", origin="platform:group_888888")))
 
     def test_rate_limit_blocks_after_max_requests(self):
         plugin = self.make_plugin({"rate_limit_window_seconds": 60, "rate_limit_max_requests": 2})

@@ -40,6 +40,8 @@ NovelAI 直连 AstrBot 生图插件，插件内 Python 直接请求 NovelAI 相�
 - `admin_max_resolution`: 管理员自定义分辨率上限（默认 `4194304`）
 - `user_whitelist` / `user_blacklist`（推荐）
 - `whitelist_user_ids` / `blacklist_user_ids`（旧配置兼容）
+- `group_whitelist` / `group_blacklist`（推荐）
+- `whitelist_group_ids` / `blacklist_group_ids`（旧配置兼容）
 - `rate_limit_window_seconds` / `rate_limit_max_requests`
 - `quota_enabled` / `default_daily_quota` / `sign_bonus_quota` / `quota_cap`
 - `auto_trigger_keywords`
@@ -51,7 +53,7 @@ NovelAI 直连 AstrBot 生图插件，插件内 Python 直接请求 NovelAI 相�
 
 - 管理员：可用所有功能，支持自定义分辨率（`--size 1536x1024` 或 `--width/--height`）。
 - 非管理员：仅允许不消耗路径（单张文生图、禁止图生图/导演工具/编码参考图、禁止多张与高分辨率）。
-- 黑名单/白名单/频率限制命中时：生图指令会静默忽略；`admin_user_ids` 不受这些限制影响。
+- 用户或群黑名单/白名单/频率限制命中时：生图指令会静默忽略；`admin_user_ids` 不受这些限制影响。
 
 ## 指令示例
 

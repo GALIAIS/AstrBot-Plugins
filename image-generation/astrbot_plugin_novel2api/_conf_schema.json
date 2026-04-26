@@ -168,6 +168,16 @@
     "type": "list",
     "default": []
   },
+  "whitelist_group_ids": {
+    "description": "群白名单（群号）。非空时，仅白名单内群可使用生图（兼容旧配置名）",
+    "type": "list",
+    "default": []
+  },
+  "group_whitelist": {
+    "description": "群白名单（群号）。非空时，仅白名单内群可使用生图",
+    "type": "list",
+    "default": []
+  },
   "blacklist_user_ids": {
     "description": "黑名单用户 ID 列表（兼容旧配置名）",
     "type": "list",
@@ -175,6 +185,16 @@
   },
   "user_blacklist": {
     "description": "用户黑名单（sender_id/QQ号）。命中后静默忽略生图指令",
+    "type": "list",
+    "default": []
+  },
+  "blacklist_group_ids": {
+    "description": "群黑名单（群号）。命中后静默忽略该群内生图指令（兼容旧配置名）",
+    "type": "list",
+    "default": []
+  },
+  "group_blacklist": {
+    "description": "群黑名单（群号）。命中后静默忽略该群内生图指令",
     "type": "list",
     "default": []
   },

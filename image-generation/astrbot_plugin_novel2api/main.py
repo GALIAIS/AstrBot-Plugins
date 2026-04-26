@@ -846,13 +846,47 @@ class Novel2ApiPlugin(Star):
             items.update(self._normalize_id_list(self._cfg(key, [])))
         return items
 
+    def _event_group_id(self, event: AstrMessageEvent) -> str:
+        for attr in ("group_id", "groupId"):
+            value = getattr(event, attr, None)
+            if value is not None:
+                text = str(value).strip()
+                if text:
+                    return text
+        message_obj = getattr(event, "message_obj", None)
+        for attr in ("group_id", "groupId"):
+            value = getattr(message_obj, attr, None)
+            if value is not None:
+                text = str(value).strip()
+                if text:
+                    return text
+        raw_message = getattr(message_obj, "raw_message", None)
+        if isinstance(raw_message, dict):
+            for key in ("group_id", "groupId"):
+                value = raw_message.get(key)
+                if value is not None:
+                    text = str(value).strip()
+                    if text:
+                        return text
+        origin = str(getattr(event, "unified_msg_origin", "") or "").strip()
+        match = re.search(r"group[:/_-]?(\d+)", origin, flags=re.IGNORECASE)
+        if match:
+            return match.group(1).strip()
+        return ""
+
     def _is_sender_allowed(self, event: AstrMessageEvent) -> bool:
         uid = self._event_sender_id(event)
         if not uid:
             return True
         if self._is_admin_user(event):
             return True
+        group_id = self._event_group_id(event)
+        if group_id and group_id in self._cfg_id_list("group_blacklist", "blacklist_group_ids"):
+            return False
         if uid in self._cfg_id_list("user_blacklist", "blacklist_user_ids"):
+            return False
+        group_whitelist = self._cfg_id_list("group_whitelist", "whitelist_group_ids")
+        if group_id and group_whitelist and group_id not in group_whitelist:
             return False
         whitelist = self._cfg_id_list("user_whitelist", "whitelist_user_ids")
         if whitelist and uid not in whitelist:
