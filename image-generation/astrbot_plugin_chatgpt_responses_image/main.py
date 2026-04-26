@@ -235,6 +235,7 @@ class ChatGPTResponsesImagePlugin(Star):
         self._relay_state_lock = asyncio.Lock()
         self._relay_runtime: dict[str, dict[str, Any]] = {}
         self._relay_rr_counter = 0
+        self._forced_relay_name = ""
 
     async def initialize(self):
         logger.info("astrbot_plugin_chatgpt_responses_image 已初始化")
@@ -265,6 +266,51 @@ class ChatGPTResponsesImagePlugin(Star):
         event.stop_event()
         async for result in self._dispatch_action(event, "status", self._rest_after_command(event.message_str, "status")):
             yield result
+
+    @filter.command("gpt图中转状态", alias={"gptrelaystatus", "gpt relay status", "chatgpt relay status"})
+    async def relay_status_command(self, event: AstrMessageEvent):
+        event.stop_event()
+        yield event.plain_result(self._format_relay_status_card())
+
+    @filter.command("gpt图切站", alias={"gptrelay", "gpt relay"})
+    async def switch_relay_command(self, event: AstrMessageEvent):
+        event.stop_event()
+        target = self._rest_after_command(event.message_str).strip()
+        if not target:
+            yield self._build_error_result(event, "参数错误", "用法：gpt图切站 <relay-name|auto>")
+            return
+        relays = self._get_relay_configs()
+        if target.lower() in {"auto", "自动"}:
+            self._forced_relay_name = ""
+            yield event.plain_result(self._format_card("中转站选择", ["已恢复自动选择。"], icon="✅"))
+            return
+        names = {relay.name for relay in relays}
+        if target not in names:
+            yield self._build_error_result(event, "参数错误", f"未找到中转站：{target}")
+            return
+        self._forced_relay_name = target
+        yield event.plain_result(self._format_card("中转站选择", [f"已固定优先使用：{target}"], icon="✅"))
+
+    @filter.command("gpt图恢复中转", alias={"gptrelayrecover", "gpt relay recover"})
+    async def recover_relay_command(self, event: AstrMessageEvent):
+        event.stop_event()
+        target = self._rest_after_command(event.message_str).strip()
+        if not target:
+            yield self._build_error_result(event, "参数错误", "用法：gpt图恢复中转 <relay-name|all>")
+            return
+        async with self._relay_state_lock:
+            if target.lower() == "all":
+                for state in self._relay_runtime.values():
+                    state["consecutive_failures"] = 0
+                    state["cooldown_until"] = 0.0
+                    state["last_error"] = ""
+                yield event.plain_result(self._format_card("中转站恢复", ["已清除全部中转站的熔断状态。"], icon="✅"))
+                return
+            state = self._relay_runtime.setdefault(target, {})
+            state["consecutive_failures"] = 0
+            state["cooldown_until"] = 0.0
+            state["last_error"] = ""
+        yield event.plain_result(self._format_card("中转站恢复", [f"已恢复：{target}"], icon="✅"))
 
     @filter.command("gpt生图", alias={"gpt画图", "chatgpt生图", "gptimg", "gptimage", "gpt image", "gpt draw", "chatgpt image"})
     async def generate_command(self, event: AstrMessageEvent):
@@ -720,6 +766,10 @@ class ChatGPTResponsesImagePlugin(Star):
         relays = [relay for relay in self._get_relay_configs() if relay.enabled]
         if not relays:
             return []
+        if self._forced_relay_name:
+            preferred = [relay for relay in relays if relay.name == self._forced_relay_name]
+            others = [relay for relay in relays if relay.name != self._forced_relay_name]
+            relays = preferred + others
         now = time.monotonic()
         preferred: list[RelayEndpointConfig] = []
         fallback: list[RelayEndpointConfig] = []
@@ -761,6 +811,15 @@ class ChatGPTResponsesImagePlugin(Star):
             seen.add(relay.name)
             ordered.append(relay)
         return ordered
+
+    async def _try_acquire_relay_slot(self, relay: RelayEndpointConfig) -> bool:
+        async with self._relay_state_lock:
+            state = self._relay_runtime.setdefault(relay.name, {})
+            inflight = int(state.get("inflight", 0) or 0)
+            if relay.max_concurrency > 0 and inflight >= relay.max_concurrency:
+                return False
+            state["inflight"] = inflight + 1
+            return True
 
     async def _mark_relay_inflight(self, relay_name: str, delta: int) -> None:
         async with self._relay_state_lock:
@@ -806,6 +865,42 @@ class ChatGPTResponsesImagePlugin(Star):
             parts.append(f"{relay.name}:{status}/{inflight}")
         suffix = " ..." if len(relays) > 6 else ""
         return f"中转：{len(relays)} 个 · " + " · ".join(parts) + suffix
+
+    def _format_relay_status_card(self) -> str:
+        relays = self._get_relay_configs()
+        if not relays:
+            return self._format_card("中转站状态", ["未配置 relay_endpoints，当前仅使用单站配置。"], icon="🛰️")
+        now = time.monotonic()
+        lines: list[str] = []
+        if self._forced_relay_name:
+            lines.append(f"固定中转：{self._forced_relay_name}")
+        else:
+            lines.append("固定中转：自动选择")
+        for relay in relays:
+            state = self._relay_runtime.get(relay.name, {})
+            inflight = int(state.get("inflight", 0) or 0)
+            fails = int(state.get("consecutive_failures", 0) or 0)
+            cooldown_until = float(state.get("cooldown_until", 0.0) or 0.0)
+            cooldown_left = max(0.0, cooldown_until - now)
+            last_error = str(state.get("last_error", "") or "").strip()
+            if cooldown_left > 0:
+                status = f"熔断 {cooldown_left:.0f}s"
+            elif not relay.enabled:
+                status = "停用"
+            else:
+                status = "可用"
+            line = (
+                f"{relay.name} · {status} · p={relay.priority} · w={relay.weight} · "
+                f"inflight={inflight}"
+            )
+            if relay.max_concurrency > 0:
+                line += f"/{relay.max_concurrency}"
+            if fails > 0:
+                line += f" · fail={fails}"
+            if last_error:
+                line += f" · err={last_error}"
+            lines.append(line)
+        return self._format_card("中转站状态", lines, icon="🛰️")
 
     async def _check_sender_rate_limit(self, event: AstrMessageEvent) -> bool:
         sender_id = self._event_sender_id(event)
@@ -1005,7 +1100,9 @@ class ChatGPTResponsesImagePlugin(Star):
         headers = self._build_headers(api_key, session_id=session_id, account_id=relay.chatgpt_account_id)
         last_err = "请求失败"
         should_switch = True
-        await self._mark_relay_inflight(relay.name, 1)
+        acquired = await self._try_acquire_relay_slot(relay)
+        if not acquired:
+            return False, None, f"中转站 {relay.name} 当前已达并发上限。", True
         try:
             for attempt in range(retries + 1):
                 ok_http, status_code, resp_headers, resp_text, transport_err = await self._request_responses_transport(
@@ -2885,6 +2982,9 @@ class ChatGPTResponsesImagePlugin(Star):
                 "gpt生图 <prompt>  文生图",
                 "gpt改图 <prompt>  图生图 / 多图改图",
                 "gpt图状态  查看默认参数和队列状态",
+                "gpt图中转状态  查看中转站池详情",
+                "gpt图切站 <relay-name|auto>  手动指定优先中转站",
+                "gpt图恢复中转 <relay-name|all>  清除中转站熔断状态",
                 "gpt图帮助  查看这份帮助",
                 "也支持简繁英触发：gpt 繪圖 / gpt 改圖 / gpt image / edit image / gpt help / chatgpt status",
                 f"支持参数：{self._supported_options_text()}",

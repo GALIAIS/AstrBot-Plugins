@@ -346,6 +346,107 @@ class PluginStabilityTests(unittest.TestCase):
         self.assertIn("中转：2 个", summary)
         self.assertIn("a:可用/1", summary)
 
+    def test_relay_status_card_includes_forced_and_cooldown(self):
+        plugin = self.make_plugin({
+            "relay_endpoints": [
+                {"name": "a", "base_url": "https://a.example.com", "api_key": "key-a", "max_concurrency": 2},
+                {"name": "b", "base_url": "https://b.example.com", "api_key": "key-b"},
+            ],
+        })
+        plugin._forced_relay_name = "a"
+        plugin._relay_runtime["a"] = {"inflight": 1, "consecutive_failures": 2, "last_error": "timeout"}
+        plugin._relay_runtime["b"] = {"cooldown_until": self.module.time.monotonic() + 30}
+        card = plugin._format_relay_status_card()
+        self.assertIn("固定中转：a", card)
+        self.assertIn("a · 可用", card)
+        self.assertIn("b · 熔断", card)
+
+    def test_relay_capacity_is_enforced_at_request_time(self):
+        plugin = self.make_plugin({
+            "relay_endpoints": [
+                {"name": "a", "base_url": "https://a.example.com", "api_key": "key-a", "max_concurrency": 1},
+                {"name": "b", "base_url": "https://b.example.com", "api_key": "key-b", "max_concurrency": 1},
+            ],
+            "server_error_retries": 0,
+        })
+        plugin._relay_runtime["a"] = {"inflight": 1}
+        calls = []
+
+        async def fake_transport(**kwargs):
+            calls.append(kwargs["endpoint"])
+            return True, 200, {"content-type": "text/event-stream"}, (
+                "data: " + json.dumps({
+                    "type": "response.completed",
+                    "response": {
+                        "model": "gpt-5.4",
+                        "status": "completed",
+                        "output": [{
+                            "type": "image_generation_call",
+                            "size": "1024x1024",
+                            "output_format": "png",
+                            "result": base64.b64encode(PNG_1X1).decode("ascii"),
+                        }],
+                    },
+                }) + "\n\n"
+            ), ""
+
+        async def scenario():
+            plugin._request_responses_transport = fake_transport
+            return await plugin._request_responses_api(
+                api_key="legacy-key",
+                payload={},
+                output_format_hint="png",
+                session_id="test-session",
+            )
+
+        ok, result, err = asyncio.run(scenario())
+        self.assertTrue(ok, err)
+        self.assertEqual(len(calls), 1)
+        self.assertIn("b.example.com", calls[0])
+
+    def test_switch_relay_command_sets_forced_relay(self):
+        plugin = self.make_plugin({
+            "relay_endpoints": [
+                {"name": "a", "base_url": "https://a.example.com", "api_key": "key-a"},
+            ],
+        })
+
+        class Event:
+            def __init__(self):
+                self.message_str = "gpt图切站 a"
+            def get_sender_id(self):
+                return "123456"
+            def plain_result(self, text):
+                return ("plain", text)
+            def chain_result(self, chain):
+                return ("chain", chain)
+            def stop_event(self):
+                pass
+
+        results = asyncio.run(plugin.switch_relay_command(Event()).__anext__())
+        self.assertEqual(plugin._forced_relay_name, "a")
+        self.assertEqual(results[0], "plain")
+
+    def test_recover_relay_command_clears_cooldown(self):
+        plugin = self.make_plugin()
+        plugin._relay_runtime["a"] = {"consecutive_failures": 3, "cooldown_until": self.module.time.monotonic() + 60, "last_error": "timeout"}
+
+        class Event:
+            def __init__(self):
+                self.message_str = "gpt图恢复中转 a"
+            def get_sender_id(self):
+                return "123456"
+            def plain_result(self, text):
+                return ("plain", text)
+            def chain_result(self, chain):
+                return ("chain", chain)
+            def stop_event(self):
+                pass
+
+        results = asyncio.run(plugin.recover_relay_command(Event()).__anext__())
+        self.assertEqual(plugin._relay_runtime["a"]["consecutive_failures"], 0)
+        self.assertEqual(results[0], "plain")
+
     def test_sse_upstream_stream_error_is_readable_without_retry_copy(self):
         plugin = self.make_plugin()
         sse = "data: " + json.dumps({

@@ -26,6 +26,9 @@
 - `gpt生图 <prompt> [size=<宽>x<高>|auto] [format=png|jpeg|webp] [model=gpt-5.4]`
 - `gpt改图 <prompt> [size=<宽>x<高>|auto] [format=png|jpeg|webp] [model=gpt-5.4]`
 - `gpt图状态`
+- `gpt图中转状态`
+- `gpt图切站 <relay-name|auto>`
+- `gpt图恢复中转 <relay-name|all>`
 - `gpt图帮助`
 
 也支持更宽松的简体 / 繁体 / 英文前缀，例如：
@@ -83,6 +86,7 @@
 
 - 固定使用 `Responses SSE`，不再走 `/v1/images/generations` 或 `/v1/images/edits`
 - 若配置 `relay_endpoints`，插件会优先走中转站池：按优先级 + 加权轮询选择节点，遇到可恢复错误时自动切换下一个中转站
+- `gpt图状态` 会显示中转站池摘要；`gpt图中转状态` 会显示每个 relay 的并发、熔断和最近错误
 - 图生图通过 `input_text + input_image(data URL)` 发送到 `/v1/responses`
 - `image_generation` tool 当前只发送 `type / size / output_format`，保持与参考实现一致
 - 当前版本不支持 `mask / inpainting`
